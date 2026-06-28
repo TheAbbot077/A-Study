@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: abbot_study_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: abbot_study
+      POSTGRES_USER: abbot_study
+      POSTGRES_PASSWORD: abbot_study_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - abbot_study_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U abbot_study -d abbot_study"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: abbot_study_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: abbot_study_backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env.example
+    command: python --version
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    container_name: abbot_study_frontend
+    volumes:
+      - ./frontend:/app
+    env_file:
+      - .env.example
+    command: node --version
+
+volumes:
+  abbot_study_postgres_data:
