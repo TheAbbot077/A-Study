@@ -7,6 +7,7 @@ services:
       POSTGRES_DB: abbot_study
       POSTGRES_USER: abbot_study
       POSTGRES_PASSWORD: abbot_study_password
+      DJANGO_SETTINGS_MODULE: config.settings.docker
     ports:
       - "5433:5432"
     volumes:
@@ -43,7 +44,25 @@ services:
       - ./backend:/app
     env_file:
       - .env.example
-    command: python --version
+    command: sleep infinity
+
+  celery:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: abbot_study_celery
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env.example
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.docker
+    command: celery -A config worker --loglevel=info
 
   frontend:
     build:
@@ -54,7 +73,7 @@ services:
       - ./frontend:/app
     env_file:
       - .env.example
-    command: node --version
+    command: sleep infinity
 
 volumes:
   abbot_study_postgres_data:

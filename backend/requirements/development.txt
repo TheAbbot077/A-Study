@@ -1,0 +1,17 @@
+-r base.txt
+
+black
+
+ruff
+
+mypy
+
+pytest
+
+pytest-django
+
+factory-boy
+
+ipython
+
+django-extensions
