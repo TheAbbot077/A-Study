@@ -1,4 +1,4 @@
-from .models import (
+from apps.users.domain.models import (
     Institution,
     InstitutionMembership,
     InstitutionRole,

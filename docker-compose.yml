@@ -10,6 +10,7 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.docker
     ports:
       - "5433:5432"
+      - "8000:8000"
     volumes:
       - abbot_study_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -44,7 +45,7 @@ services:
       - ./backend:/app
     env_file:
       - .env.example
-    command: sleep infinity
+    command: python manage.py runserver 0.0.0.0:8000
 
   celery:
     build:

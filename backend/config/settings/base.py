@@ -28,7 +28,12 @@ INSTALLED_APPS = [
     "django_filters",
     "drf_spectacular",
 
-    # Local apps will be added after app configs exist.
+    # Local apps
+    "apps.users.apps.UsersConfig",
+    "apps.storage.apps.StorageConfig",
+    "apps.notifications.apps.NotificationsConfig",
+    "apps.settings.apps.SettingsConfig",
+    "apps.audit.apps.AuditConfig",
 ]
 
 MIDDLEWARE = [
@@ -83,6 +88,8 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+AUTH_USER_MODEL = "users.User"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
