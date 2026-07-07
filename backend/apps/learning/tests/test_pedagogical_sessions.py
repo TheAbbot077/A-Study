@@ -41,7 +41,24 @@ class PedagogicalSessionModelTests(SimpleTestCase):
         )
         self.assertEqual(
             {choice[0] for choice in PedagogicalMessage.MessageType.choices},
-            {"explanation", "question", "response", "clarification", "summary", "system"},
+            {
+                "explanation",
+                "question",
+                "response",
+                "clarification",
+                "summary",
+                "learner_question",
+                "acknowledgement",
+                "reflection",
+                "transition",
+                "presence",
+                "encouragement",
+                "reflection_prompt",
+                "clarification_prompt",
+                "learning_check",
+                "session_summary",
+                "system",
+            },
         )
 
     def test_message_sequence_constraints_and_ordering_are_declared(self):

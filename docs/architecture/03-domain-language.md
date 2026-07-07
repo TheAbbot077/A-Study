@@ -251,6 +251,122 @@ Pedagogical Messages preserve sequence and content for future teaching, review, 
 
 ---
 
+## Pedagogical Context
+
+A stable context package assembled for a Pedagogical Session or a learner and Content Concept.
+
+Pedagogical Context includes the learner, target concept, containing section, source learning resource, and reachable curriculum details.
+
+Pedagogical Context is read-only. It does not generate lessons, prompts, assessments, or progression decisions.
+
+---
+
+## Grounded Teaching Package
+
+A deterministic evidence package derived from Pedagogical Context.
+
+Grounded Teaching Packages identify the primary Content Concept, supporting academic evidence, and source references.
+
+They preserve provenance for future teaching orchestration but do not generate lessons or validate generated explanations.
+
+---
+
+## Source Reference
+
+A pointer to an academic object used as instructional evidence.
+
+Source References identify object type, object id, title, relationship, and sequence number when available.
+
+---
+
+## Instructional Strategy
+
+A structured pedagogical approach selected for a Grounded Teaching Package.
+
+Instructional Strategies define how the concept should be taught before conversation orchestration or AI language generation occurs.
+
+---
+
+## Strategy Step
+
+One ordered instructional move within an Instructional Strategy.
+
+Strategy Steps describe instructional goals and recommended interactions without producing learner-facing lesson text.
+
+---
+
+## Conversation Context
+
+The structured dialogue state for a Pedagogical Session.
+
+Conversation Context references the Grounded Teaching Package, Instructional Strategy, active conversation window, current turn number, and current instructional step.
+
+---
+
+## Conversation Turn
+
+One ordered dialogue entry in a Pedagogical Session.
+
+Conversation Turns preserve sender, interaction type, content, sequence, timestamp, and metadata.
+
+---
+
+## Conversation Window
+
+The active chronological subset of Conversation Turns used for dialogue continuity.
+
+Conversation Windows may support future summarization, but summarization is not part of the PI-4E implementation.
+
+---
+
+## Abbot Teaching Agent
+
+The platform-owned orchestrator that prepares structured teaching responses from grounded evidence, instructional strategy, and conversation context.
+
+The Abbot Teaching Agent does not define curriculum, award mastery, unlock progression, or call AI providers directly.
+
+---
+
+## Abbot Teaching Response
+
+A structured response package produced by the Abbot Teaching Agent.
+
+Abbot Teaching Responses contain sections, source references, strategy used, response type, and metadata.
+
+---
+
+## Learning Companion
+
+A reusable non-primary teaching companion that supports learning presence, encouragement, reflection, or specialized practice without replacing The Abbot.
+
+Learning Companions do not assess mastery, unlock progression, reorder curriculum, or override grounding.
+
+---
+
+## Ariel Companion
+
+The first concrete Learning Companion.
+
+Ariel supports reflection and session continuity, but PI-4G does not implement Ariel teach-back mastery.
+
+---
+
+## Companion Interaction
+
+A structured companion request within a Pedagogical Session.
+
+Companion Interactions identify the companion type, interaction type, session, and optional context.
+
+---
+
+## Companion Response
+
+A deterministic companion output that may be recorded into the session conversation.
+
+Companion Responses are supportive dialogue artifacts, not primary teaching content.
+
+---
+
 ## Lesson Snapshot
 
 A versioned, reviewable representation of a teaching session.

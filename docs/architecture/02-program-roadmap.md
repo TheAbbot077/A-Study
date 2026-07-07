@@ -75,7 +75,7 @@ Exit Criteria:
 
 ### PI-4 - Learning Engine
 
-**Status:** In Progress
+**Status:** Complete
 
 Focus:
 
@@ -89,14 +89,13 @@ Focus:
 Completed:
 
 * PI-4A - Pedagogical Session Platform
-
-Remaining:
-
-* Lesson orchestration
-* Context assembly
-* Grounded explanations
-* Conversational tutoring
-* Ariel session enrichment
+* PI-4B - Context Assembly Engine
+* PI-4C - Grounding Engine
+* PI-4D - Instructional Strategy Engine
+* PI-4E - Conversation Orchestrator
+* PI-4F - Abbot Teaching Agent
+* PI-4G - Learning Companion Platform (Ariel first implementation)
+* PI-4H - Pedagogical Orchestration Platform Hardening
 
 ---
 
@@ -224,7 +223,7 @@ Focus:
 
 # Program Increment 4 — Pedagogical Engine
 
-**Status:** Planned
+**Status:** Complete
 
 ## Mission
 
@@ -339,21 +338,22 @@ Produces structured teaching responses while remaining independent of a specific
 
 ---
 
-### 4G — Ariel Learning Companion Foundation
+### 4G - Learning Companion Platform
 
-Introduces Ariel into pedagogical sessions.
+Introduces reusable learning companions into pedagogical sessions, with Ariel as the first concrete implementation.
 
 Provides:
 
-* shared session awareness
-* memory hooks
-* future teach-back readiness
+* companion registration
+* session activation
+* deterministic companion responses
+* conversation recording through session infrastructure
 
 Teach-back remains part of a later Program Increment.
 
 ---
 
-### 4H — Pedagogical Engine Hardening
+### 4H - Pedagogical Orchestration Platform Hardening
 
 Program Increment review covering:
 

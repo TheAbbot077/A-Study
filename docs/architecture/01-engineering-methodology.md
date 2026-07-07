@@ -208,3 +208,17 @@ update dependency diagrams where applicable;
 preserve architectural rationale;
 never rewrite historical ADR decisions;
 never alter constitutional principles unless explicitly directed by the project architect.
+
+## Canonical Validation Policy
+
+Abbot Study uses pytest as the canonical backend test runner.
+
+The Django test runner (`python manage.py test`) is not part of the standard engineering workflow and should not be used for capability validation unless explicitly required for a specific investigation.
+
+Canonical backend validation:
+
+- ./scripts/validate_backend.ps1
+- pytest
+- Docker
+
+All engineering prompts should reference these validation commands.
