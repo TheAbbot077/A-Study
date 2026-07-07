@@ -34,6 +34,8 @@ INSTALLED_APPS = [
     "apps.notifications.apps.NotificationsConfig",
     "apps.settings.apps.SettingsConfig",
     "apps.audit.apps.AuditConfig",
+    "apps.academic.apps.AcademicConfig",
+    "apps.learning.apps.LearningConfig",
 ]
 
 MIDDLEWARE = [
