@@ -15,6 +15,10 @@ redis
 python-dotenv
 
 Pillow
+pypdf
+python-docx
+pdf2image
+pytesseract
 
 drf-spectacular
 

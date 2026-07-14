@@ -2,6 +2,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from django.utils.text import slugify
 
 from apps.academic.api.serializers import (
     ContentConceptSerializer,
@@ -32,16 +33,42 @@ from apps.academic.services import (
     ManualAuthoringService,
     ResourceIngestionService,
 )
+from apps.users.domain.models import Institution, InstitutionMembership
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
-    queryset = Subject.objects.all().order_by("code")
     serializer_class = SubjectSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "post", "put", "patch", "head", "options"]
 
+    def get_queryset(self):
+        institution_ids = list(
+            InstitutionMembership.objects.filter(user=self.request.user, is_active=True).values_list("institution_id", flat=True)
+        )
+        queryset = Subject.objects.all().order_by("code")
+        if not institution_ids:
+            return queryset.none()
+        return queryset.filter(institution_id__in=institution_ids)
+
+    def _resolve_institution(self, serializer):
+        institution = serializer.validated_data.get("institution")
+        if institution is not None:
+            return institution
+
+        membership = InstitutionMembership.objects.select_related("institution").filter(user=self.request.user, is_active=True).order_by("created_at").first()
+        if membership is not None:
+            return membership.institution
+
+        institution = Institution.objects.create(
+            name=f"{self.request.user.email.split('@')[0]}'s Study Space",
+            slug=f"{slugify(self.request.user.email.split('@')[0]) or 'learner'}-{str(self.request.user.id)[:8]}",
+        )
+        InstitutionMembership.objects.create(user=self.request.user, institution=institution, is_active=True)
+        return institution
+
     def perform_create(self, serializer):
-        data = serializer.validated_data
+        data = dict(serializer.validated_data)
+        data["institution"] = self._resolve_institution(serializer)
         self.instance = AcademicStructureService().create_subject(**data)
 
     def create(self, request, *args, **kwargs):
@@ -134,10 +161,22 @@ class CurriculumUnitViewSet(viewsets.ModelViewSet):
 
 
 class LearningResourceViewSet(viewsets.ModelViewSet):
-    queryset = LearningResource.objects.all().order_by("-created_at")
     serializer_class = LearningResourceSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "post", "put", "patch", "head", "options"]
+
+    def get_queryset(self):
+        institution_ids = list(
+            InstitutionMembership.objects.filter(user=self.request.user, is_active=True).values_list("institution_id", flat=True)
+        )
+        queryset = LearningResource.objects.all().order_by("-created_at")
+        if not institution_ids:
+            return queryset.none()
+        queryset = queryset.filter(subject__institution_id__in=institution_ids)
+        subject_id = self.request.query_params.get("subject")
+        if subject_id:
+            queryset = queryset.filter(subject_id=subject_id)
+        return queryset
 
     def perform_create(self, serializer):
         data = serializer.validated_data
@@ -167,10 +206,22 @@ class LearningResourceViewSet(viewsets.ModelViewSet):
 
 
 class ContentSectionViewSet(viewsets.ModelViewSet):
-    queryset = ContentSection.objects.all().order_by("learning_resource", "sequence_number")
     serializer_class = ContentSectionSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "post", "put", "patch", "head", "options"]
+
+    def get_queryset(self):
+        institution_ids = list(
+            InstitutionMembership.objects.filter(user=self.request.user, is_active=True).values_list("institution_id", flat=True)
+        )
+        queryset = ContentSection.objects.all().order_by("learning_resource", "sequence_number")
+        if not institution_ids:
+            return queryset.none()
+        queryset = queryset.filter(learning_resource__subject__institution_id__in=institution_ids)
+        learning_resource_id = self.request.query_params.get("learning_resource")
+        if learning_resource_id:
+            queryset = queryset.filter(learning_resource_id=learning_resource_id)
+        return queryset
 
     def perform_create(self, serializer):
         data = serializer.validated_data
@@ -245,10 +296,25 @@ class ContentSectionViewSet(viewsets.ModelViewSet):
 
 
 class ContentConceptViewSet(viewsets.ModelViewSet):
-    queryset = ContentConcept.objects.all().order_by("content_section", "sequence_number")
     serializer_class = ContentConceptSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "post", "put", "patch", "head", "options"]
+
+    def get_queryset(self):
+        institution_ids = list(
+            InstitutionMembership.objects.filter(user=self.request.user, is_active=True).values_list("institution_id", flat=True)
+        )
+        queryset = ContentConcept.objects.all().order_by("content_section", "sequence_number")
+        if not institution_ids:
+            return queryset.none()
+        queryset = queryset.filter(content_section__learning_resource__subject__institution_id__in=institution_ids)
+        learning_resource_id = self.request.query_params.get("learning_resource")
+        if learning_resource_id:
+            queryset = queryset.filter(content_section__learning_resource_id=learning_resource_id)
+        content_section_id = self.request.query_params.get("content_section")
+        if content_section_id:
+            queryset = queryset.filter(content_section_id=content_section_id)
+        return queryset
 
     def perform_create(self, serializer):
         data = serializer.validated_data

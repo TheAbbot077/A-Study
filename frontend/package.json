@@ -3,11 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "smoke:audit": "node ./scripts/audit-routes.mjs",
+    "smoke:audit:test": "node --test ./scripts/audit-routes.test.mjs",
+    "smoke:e2e": "playwright test tests/smoke",
+    "smoke": "npm run smoke:audit && npm run smoke:e2e"
   },
   "dependencies": {
     "next": "16.2.9",
@@ -15,6 +19,7 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

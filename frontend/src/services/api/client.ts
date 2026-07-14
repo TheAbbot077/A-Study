@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "./config";
+import { ensureCsrfToken } from "./csrf";
 import { ApiError } from "./errors";
 
 export async function apiRequest<TResponse>(
@@ -8,12 +9,19 @@ export async function apiRequest<TResponse>(
   const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
   const url = `${API_BASE_URL.replace(/\/$/, "")}/${normalizedPath}`;
 
+  const method = options?.method?.toUpperCase() ?? "GET";
+  const csrfToken =
+    method === "GET" || method === "HEAD" || method === "OPTIONS"
+      ? null
+      : await ensureCsrfToken();
+  const isFormData = typeof FormData !== "undefined" && options?.body instanceof FormData;
   const response = await fetch(url, {
     ...options,
     credentials: "include",
     headers: {
       Accept: "application/json",
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
       ...(options?.headers ?? {}),
     },
   });

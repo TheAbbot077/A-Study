@@ -36,6 +36,12 @@ INSTALLED_APPS = [
     "apps.audit.apps.AuditConfig",
     "apps.academic.apps.AcademicConfig",
     "apps.learning.apps.LearningConfig",
+    "apps.assessments.apps.AssessmentsConfig",
+    "apps.remediation.apps.RemediationConfig",
+    "apps.assessment_review.apps.AssessmentReviewConfig",
+    "apps.content_intelligence.apps.ContentIntelligenceConfig",
+    "apps.content_processing.apps.ContentProcessingConfig",
+    "apps.retrieval.apps.RetrievalConfig",
 ]
 
 MIDDLEWARE = [
@@ -99,10 +105,11 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
         "DJANGO_CORS_ALLOWED_ORIGINS",
-        "http://localhost:3000",
+        "http://localhost:3000,http://127.0.0.1:3000",
     ).split(",")
     if origin.strip()
 ]
+CORS_ALLOW_CREDENTIALS = True
 
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",

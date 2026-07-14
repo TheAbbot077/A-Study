@@ -59,6 +59,15 @@ class LearningContentService:
         )
         return section
 
+    def delete_section(self, section: ContentSection) -> None:
+        payload = {
+            "section_id": str(section.id),
+            "learning_resource_id": str(section.learning_resource_id),
+            "title": section.title,
+        }
+        section.delete()
+        self.event_publisher.publish(BusinessEvent.create("academic.content_section_deleted", payload=payload))
+
     def get_section(self, learning_resource: LearningResource, section_id: str) -> ContentSection:
         return ContentSection.objects.get(learning_resource=learning_resource, id=section_id)
 
@@ -114,6 +123,15 @@ class LearningContentService:
             )
         )
         return concept
+
+    def delete_concept(self, concept: ContentConcept) -> None:
+        payload = {
+            "concept_id": str(concept.id),
+            "section_id": str(concept.content_section_id),
+            "title": concept.title,
+        }
+        concept.delete()
+        self.event_publisher.publish(BusinessEvent.create("academic.content_concept_deleted", payload=payload))
 
     def get_concept(self, content_section: ContentSection, concept_id: str) -> ContentConcept:
         return ContentConcept.objects.get(content_section=content_section, id=concept_id)

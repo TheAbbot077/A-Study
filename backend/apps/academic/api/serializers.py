@@ -9,13 +9,17 @@ from apps.academic.domain.models import (
     ResourceIngestionJob,
     Subject,
 )
+from apps.users.domain.models import Institution
 
 
 class SubjectSerializer(serializers.ModelSerializer):
+    institution = serializers.PrimaryKeyRelatedField(required=False, allow_null=True, queryset=Institution.objects.all())
+
     class Meta:
         model = Subject
         fields = ["id", "institution", "code", "name", "description", "is_active", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
+        validators = []
 
 
 class CurriculumSerializer(serializers.ModelSerializer):
@@ -33,6 +37,8 @@ class CurriculumUnitSerializer(serializers.ModelSerializer):
 
 
 class LearningResourceSerializer(serializers.ModelSerializer):
+    resource_ready_for_learning = serializers.SerializerMethodField()
+
     class Meta:
         model = LearningResource
         fields = [
@@ -47,10 +53,17 @@ class LearningResourceSerializer(serializers.ModelSerializer):
             "resource_type",
             "status",
             "source_label",
+            "resource_ready_for_learning",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_resource_ready_for_learning(self, obj):
+        latest_job = obj.content_import_jobs.order_by("-created_at").first()
+        if latest_job is None or latest_job.status != "completed":
+            return False
+        return obj.content_sections.exists() and ContentConcept.objects.filter(content_section__learning_resource=obj).exists()
 
 
 class ContentSectionSerializer(serializers.ModelSerializer):

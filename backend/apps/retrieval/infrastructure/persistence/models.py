@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+import uuid
+from django.core.exceptions import ValidationError
+from django.db import models
+from django.utils import timezone
+
+
+class RetrievalReadiness(models.TextChoices):
+    NOT_INDEXED = "not_indexed", "Not Indexed"
+    INDEXING = "indexing", "Indexing"
+    INDEXED = "indexed", "Indexed"
+    STALE = "stale", "Stale"
+    FAILED = "failed", "Failed"
+
+
+class RetrievalChunkCollection(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    population_job = models.ForeignKey("content_processing.AcademicPopulationJob", on_delete=models.PROTECT, related_name="retrieval_collections")
+    resource = models.ForeignKey("academic.LearningResource", on_delete=models.PROTECT, related_name="retrieval_collections")
+    proposal = models.ForeignKey("content_processing.AcademicImportProposal", on_delete=models.PROTECT, related_name="retrieval_collections")
+    population_version = models.CharField(max_length=64)
+    chunk_policy_version = models.CharField(max_length=64)
+    retrieval_version = models.CharField(max_length=64)
+    embedding_version = models.CharField(max_length=128)
+    chunk_count = models.PositiveIntegerField(default=0)
+    readiness = models.CharField(max_length=24, choices=RetrievalReadiness.choices, default=RetrievalReadiness.NOT_INDEXED)
+    checksum = models.CharField(max_length=128)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "retrieval_chunk_collection"
+        constraints = [models.UniqueConstraint(fields=["population_job", "population_version", "chunk_policy_version", "retrieval_version", "embedding_version"], name="retrieval_collection_identity")]
+
+
+class RetrievalChunk(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    collection = models.ForeignKey(RetrievalChunkCollection, on_delete=models.CASCADE, related_name="chunks")
+    identity_key = models.CharField(max_length=128, unique=True)
+    institution = models.ForeignKey("users.Institution", on_delete=models.PROTECT, related_name="retrieval_chunks")
+    subject = models.ForeignKey("academic.Subject", on_delete=models.PROTECT, related_name="retrieval_chunks")
+    resource = models.ForeignKey("academic.LearningResource", on_delete=models.PROTECT, related_name="retrieval_chunks")
+    section = models.ForeignKey("academic.ContentSection", on_delete=models.PROTECT, related_name="retrieval_chunks")
+    concept = models.ForeignKey("academic.ContentConcept", on_delete=models.PROTECT, null=True, blank=True, related_name="retrieval_chunks")
+    semantic_segment = models.ForeignKey("content_processing.SemanticSegment", on_delete=models.PROTECT, null=True, blank=True, related_name="retrieval_chunks")
+    proposal = models.ForeignKey("content_processing.AcademicImportProposal", on_delete=models.PROTECT, related_name="retrieval_chunks")
+    population_job = models.ForeignKey("content_processing.AcademicPopulationJob", on_delete=models.PROTECT, related_name="retrieval_chunks")
+    proposal_version = models.CharField(max_length=64)
+    population_version = models.CharField(max_length=64)
+    chunk_policy_version = models.CharField(max_length=64)
+    retrieval_version = models.CharField(max_length=64)
+    embedding_version = models.CharField(max_length=128)
+    text = models.TextField()
+    chunk_type = models.CharField(max_length=32)
+    ordering = models.PositiveIntegerField()
+    source_page_start = models.PositiveIntegerField()
+    source_page_end = models.PositiveIntegerField()
+    token_estimate = models.PositiveIntegerField()
+    confidence = models.FloatField(default=0)
+    checksum = models.CharField(max_length=128)
+    embedding = models.JSONField(default=list, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "retrieval_chunk"
+        ordering = ["ordering"]
+        constraints = [
+            models.UniqueConstraint(fields=["collection", "ordering"], name="retrieval_chunk_order_unique"),
+            models.CheckConstraint(condition=models.Q(confidence__gte=0) & models.Q(confidence__lte=1), name="retrieval_chunk_confidence_range"),
+            models.CheckConstraint(condition=models.Q(source_page_end__gte=models.F("source_page_start")), name="retrieval_chunk_page_range"),
+        ]
+        indexes = [models.Index(fields=["institution", "subject", "resource"], name="retrieval_academic_idx"), models.Index(fields=["section", "concept"], name="retrieval_content_idx")]
+
+    def clean(self):
+        self.text = " ".join(self.text.replace("\x00", " ").split())
+        if not self.text or self.section.review_status != "approved" or (self.concept_id and self.concept.review_status != "approved"):
+            raise ValidationError("Retrieval chunks require normalized approved Academic content.")
+
+
+class RetrievalIndexJob(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    population_job = models.ForeignKey("content_processing.AcademicPopulationJob", on_delete=models.PROTECT, related_name="retrieval_index_jobs")
+    collection = models.ForeignKey(RetrievalChunkCollection, on_delete=models.PROTECT, null=True, blank=True, related_name="index_jobs")
+    retrieval_version = models.CharField(max_length=64)
+    embedding_version = models.CharField(max_length=128)
+    status = models.CharField(max_length=24, choices=RetrievalReadiness.choices, default=RetrievalReadiness.NOT_INDEXED)
+    chunk_count = models.PositiveIntegerField(default=0)
+    indexed_count = models.PositiveIntegerField(default=0)
+    warnings = models.JSONField(default=list, blank=True)
+    statistics = models.JSONField(default=dict, blank=True)
+    diagnostics = models.JSONField(default=list, blank=True)
+    failure_code = models.CharField(max_length=128, blank=True)
+    checksum = models.CharField(max_length=128, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "retrieval_index_job"
+        constraints = [models.UniqueConstraint(fields=["population_job", "retrieval_version", "embedding_version"], name="retrieval_index_job_identity")]
+
+    def start(self):
+        self.status, self.started_at, self.failure_code = RetrievalReadiness.INDEXING, timezone.now(), ""
+
+    def complete(self, indexed_count, checksum):
+        if indexed_count != self.chunk_count:
+            raise ValidationError("Every retrieval chunk must be indexed before readiness.")
+        self.status, self.indexed_count, self.checksum, self.completed_at = RetrievalReadiness.INDEXED, indexed_count, checksum, timezone.now()
+
+    def fail(self, code):
+        self.status, self.failure_code, self.completed_at = RetrievalReadiness.FAILED, code, timezone.now()
+
+
+class GroundingPackage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    query_text = models.TextField()
+    retrieved_chunk_ids = models.JSONField(default=list)
+    confidence_scores = models.JSONField(default=list)
+    ranking_metadata = models.JSONField(default=dict)
+    retrieval_rationale = models.TextField(blank=True)
+    metadata_filters = models.JSONField(default=dict)
+    proposal_versions = models.JSONField(default=list)
+    population_versions = models.JSONField(default=list)
+    token_budget_summary = models.JSONField(default=dict)
+    retrieval_statistics = models.JSONField(default=dict)
+    diagnostics = models.JSONField(default=list)
+    checksum = models.CharField(max_length=128, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "retrieval_grounding_package"
+
+
+class GroundingCitation(models.Model):
+    package = models.ForeignKey(GroundingPackage, on_delete=models.CASCADE, related_name="citations")
+    chunk = models.ForeignKey(RetrievalChunk, on_delete=models.PROTECT, related_name="grounding_citations")
+    institution = models.ForeignKey("users.Institution", on_delete=models.PROTECT)
+    subject = models.ForeignKey("academic.Subject", on_delete=models.PROTECT)
+    resource = models.ForeignKey("academic.LearningResource", on_delete=models.PROTECT)
+    section = models.ForeignKey("academic.ContentSection", on_delete=models.PROTECT)
+    concept = models.ForeignKey("academic.ContentConcept", on_delete=models.PROTECT, null=True, blank=True)
+    semantic_segment = models.ForeignKey("content_processing.SemanticSegment", on_delete=models.PROTECT, null=True, blank=True)
+    proposal = models.ForeignKey("content_processing.AcademicImportProposal", on_delete=models.PROTECT)
+    population_job = models.ForeignKey("content_processing.AcademicPopulationJob", on_delete=models.PROTECT)
+    source_page_start = models.PositiveIntegerField()
+    source_page_end = models.PositiveIntegerField()
+    rank = models.PositiveIntegerField()
+    score = models.FloatField()
+
+    class Meta:
+        db_table = "retrieval_grounding_citation"
+        constraints = [models.UniqueConstraint(fields=["package", "chunk"], name="retrieval_citation_unique")]
+
+
+class RetrievalStatistic(models.Model):
+    index_job = models.OneToOneField(RetrievalIndexJob, on_delete=models.CASCADE, related_name="statistic_record")
+    collection = models.ForeignKey(RetrievalChunkCollection, on_delete=models.CASCADE, related_name="statistic_records")
+    chunk_count = models.PositiveIntegerField(default=0)
+    indexed_count = models.PositiveIntegerField(default=0)
+    embedding_batch_count = models.PositiveIntegerField(default=0)
+    ranking_policy_version = models.CharField(max_length=64)
+    values = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "retrieval_statistic"
+
+
+class RetrievalDiagnostic(models.Model):
+    index_job = models.ForeignKey(RetrievalIndexJob, on_delete=models.CASCADE, null=True, blank=True, related_name="diagnostic_records")
+    grounding_package = models.ForeignKey(GroundingPackage, on_delete=models.CASCADE, null=True, blank=True, related_name="diagnostic_records")
+    severity = models.CharField(max_length=16)
+    code = models.CharField(max_length=128)
+    message = models.TextField()
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "retrieval_diagnostic"
+
+    def clean(self):
+        if bool(self.index_job_id) == bool(self.grounding_package_id):
+            raise ValidationError("A retrieval diagnostic belongs to exactly one aggregate.")

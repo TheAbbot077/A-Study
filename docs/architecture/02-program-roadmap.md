@@ -99,11 +99,15 @@ Completed:
 
 ---
 
-### PI-5 - Assessment & Mastery
+### PI-5 - Evidence of Learning Platform
+
+**Status:** Completed
 
 Focus:
 
+* Evidence of learning platform
 * Assessment engine
+* Assessment as one evidence source
 * Question bank
 * Mastery decisions
 * Sequential unlocking
@@ -111,9 +115,24 @@ Focus:
 * Bloom's Taxonomy integration
 * Assessment history
 
+Completed:
+
+* PI-5A - Assessment Foundation
+* PI-5B - Evidence & Mastery Engine
+* PI-5C - Assessment Strategy Platform
+* PI-5D - Question Authoring & Item Bank Platform
+* PI-5E - Assessment Delivery Engine
+* PI-5F - Evaluation & Grading Platform
+* PI-5G - Evidence Integration Platform
+* PI-5H - Remediation Platform
+* PI-5I - Assessment Review Platform
+* PI-5J - Assessment Platform Hardening
+
 ---
 
 ### PI-6 - Content Intelligence
+
+**Status:** In Progress
 
 Focus:
 
@@ -123,8 +142,13 @@ Focus:
 * AI-assisted extraction
 * Validation
 * Canonicalization
+
+Completed:
+
+* PI-6A - Content Intelligence MVP
 * Import adapters
 * Content quality scoring
+* PI-6C.1 - Content Processing Job Platform
 
 ---
 
@@ -414,3 +438,18 @@ Every Program Increment delivers a coherent architectural layer. Every capabilit
 9. Program Increment Review
 
 No capability is considered complete until it has passed validation, architecture review, and documentation requirements.
+### PI-6C.2 — Layout-Aware Document Extraction
+
+Source inspection and PDF/DOCX block extraction are owned by Content Processing. Durable profiles and ordered evidence blocks precede hierarchy reconstruction; OCR is selective and native text remains preferred.
+
+### PI-6C.3 — Hierarchy Reconstruction and Semantic Segmentation
+
+Ordered extraction evidence is reconstructed into a durable, source-traceable hierarchy and deterministic semantic segments. These interpretations remain proposals for PI-6C.4 rather than Academic Platform truth.
+
+### PI-6C.4 — Academic Import Proposal and Population
+
+Academic interpretation is governed through durable proposals, evidence, review decisions, and replay-safe population jobs. Only approved proposal items can become official Academic Platform sections and concepts.
+
+### PI-6C.5 — Retrieval Foundation
+
+Approved Academic populations now project into versioned retrieval chunk collections through provider-independent embedding and index ports. Hybrid retrieval, durable citations, grounding packages, and indexing-gated teaching readiness establish the foundation for PI-7 without implementing teaching behavior.

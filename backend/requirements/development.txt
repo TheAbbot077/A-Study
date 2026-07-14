@@ -15,3 +15,5 @@ factory-boy
 ipython
 
 django-extensions
+
+reportlab

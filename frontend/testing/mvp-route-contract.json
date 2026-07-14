@@ -1,0 +1,98 @@
+{
+  "frontendRoutes": [
+    {
+      "route": "/",
+      "auth": "public",
+      "status": "implemented",
+      "description": "Landing page"
+    },
+    {
+      "route": "/login",
+      "auth": "public",
+      "status": "implemented",
+      "description": "Login page"
+    },
+    {
+      "route": "/signup",
+      "auth": "public",
+      "status": "implemented",
+      "description": "Signup page"
+    },
+    {
+      "route": "/dashboard",
+      "auth": "authenticated",
+      "status": "implemented",
+      "description": "Student dashboard"
+    },
+    {
+      "route": "/dashboard/subjects/:subjectId",
+      "auth": "authenticated",
+      "status": "implemented",
+      "description": "Subject workspace and upload flow"
+    },
+    {
+      "route": "/dashboard/resources/:resourceId",
+      "auth": "authenticated",
+      "status": "implemented",
+      "description": "Resource outline and concept browser"
+    },
+    {
+      "route": "/dashboard/concepts/:conceptId",
+      "auth": "authenticated",
+      "status": "implemented",
+      "description": "Concept learning screen and Abbot chat"
+    },
+    {
+      "route": "/dashboard/concepts/:conceptId/assessment",
+      "auth": "authenticated",
+      "status": "implemented",
+      "description": "Assessment, result, and remediation state screen"
+    },
+    {
+      "route": "/dashboard/remediation/:planId",
+      "auth": "authenticated",
+      "status": "deferred",
+      "description": "Dedicated remediation screen not yet implemented"
+    },
+    {
+      "route": "/dashboard/progress",
+      "auth": "authenticated",
+      "status": "deferred",
+      "description": "Dedicated progress screen not yet implemented"
+    }
+  ],
+  "backendEndpoints": [
+    { "path": "auth/register/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "auth/login/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "auth/logout/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "auth/me/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "academic/subjects/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "academic/subjects/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "academic/subjects/:subjectId/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "academic/learning-resources/", "method": "GET", "status": "implemented", "queryKeys": ["subject"] },
+    { "path": "academic/learning-resources/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "academic/learning-resources/:resourceId/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "academic/content-sections/", "method": "GET", "status": "implemented", "queryKeys": ["learning_resource"] },
+    { "path": "academic/content-sections/:sectionId/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "academic/content-concepts/", "method": "GET", "status": "implemented", "queryKeys": ["learning_resource"] },
+    { "path": "academic/content-concepts/:conceptId/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "storage/files/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "content-intelligence/import-jobs/", "method": "GET", "status": "implemented", "queryKeys": ["learning_resource"] },
+    { "path": "content-intelligence/import-jobs/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "content-intelligence/import-jobs/:importJobId/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "content-intelligence/import-jobs/:importJobId/retry/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "learning/pedagogical-sessions/concept-browser/", "method": "GET", "status": "implemented", "queryKeys": ["learning_resource"] },
+    { "path": "learning/pedagogical-sessions/start-or-resume/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "learning/pedagogical-sessions/:sessionId/conversation/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "learning/pedagogical-sessions/:sessionId/teach/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "learning/pedagogical-sessions/:sessionId/ask/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "assessments/mastery-check/", "method": "GET", "status": "implemented", "queryKeys": ["content_concept"] },
+    { "path": "assessments/mastery-check/start/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "assessments/mastery-check/:deliverySessionId/submit-answer/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "assessments/mastery-check/:deliverySessionId/complete/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "remediation/plans/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "remediation/plans/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "remediation/plans/history/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "remediation/plans/:planId/start/", "method": "POST", "status": "implemented", "queryKeys": [] }
+  ]
+}

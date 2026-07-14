@@ -88,6 +88,15 @@ class LearningResourceService:
         )
         return resource
 
+    def delete_resource(self, resource: LearningResource) -> None:
+        payload = {
+            "resource_id": str(resource.id),
+            "subject_id": str(resource.subject_id),
+            "title": resource.title,
+        }
+        resource.delete()
+        self.event_publisher.publish(BusinessEvent.create("academic.learning_resource_deleted", payload=payload))
+
     def get_resource(self, subject: Subject, resource_id: str) -> LearningResource:
         return LearningResource.objects.get(subject=subject, id=resource_id)
 

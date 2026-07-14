@@ -20,5 +20,13 @@ from django.urls import include, path
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/', include('apps.users.api.urls')),
+    path('api/storage/', include('apps.storage.api.urls')),
     path('api/academic/', include('apps.academic.api.urls')),
+    path('api/assessments/', include('apps.assessments.api.urls')),
+    path('api/learning/', include('apps.learning.api.urls')),
+    path('api/remediation/', include('apps.remediation.api.urls')),
+    path('api/assessment-review/', include('apps.assessment_review.api.urls')),
+    path('api/content-intelligence/', include('apps.content_intelligence.api.urls')),
+    path('api/content-processing/', include('apps.content_processing.api.urls')),
+    path('api/retrieval/', include('apps.retrieval.api.urls')),
 ]

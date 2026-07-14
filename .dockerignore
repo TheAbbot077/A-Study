@@ -1,0 +1,8 @@
+frontend/node_modules
+frontend/.next
+frontend/.turbo
+frontend/.vercel
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*

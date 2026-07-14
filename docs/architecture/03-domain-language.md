@@ -367,6 +367,224 @@ Companion Responses are supportive dialogue artifacts, not primary teaching cont
 
 ---
 
+# Assessment Domain
+
+## Assessment
+
+A structured check of learner understanding for a Content Concept.
+
+Assessments contain ordered Assessment Items and may have multiple learner attempts.
+
+---
+
+## Assessment Item
+
+One prompt or task within an Assessment.
+
+Assessment Items define the response format, but PI-5A does not generate questions or grade answers.
+
+---
+
+## Assessment Attempt
+
+A learner's attempt at an Assessment.
+
+Attempts track lifecycle state and contain submitted responses.
+
+---
+
+## Assessment Response
+
+A learner-submitted response to an Assessment Item.
+
+Assessment Responses preserve submitted data but do not imply correctness, mastery, or progression.
+
+---
+
+## Assessment Evaluation
+
+A future evaluation record attached to an Assessment Response.
+
+PI-5A defines the structure but does not implement grading.
+
+---
+
+## Assessment Result
+
+A future result record derived from an Assessment Evaluation.
+
+PI-5A defines the structure but does not award mastery or unlock content.
+
+---
+
+## Evidence of Learning Platform
+
+The PI-5 platform layer that records learning evidence and produces explicit mastery decisions.
+
+Assessment is one source of evidence; future sources may include teach-back, oral response, projects, simulations, and manual review.
+
+---
+
+## Learning Evidence
+
+A historical record that a learner demonstrated, partially demonstrated, or failed to demonstrate understanding for a Content Concept.
+
+Learning Evidence identifies the learner, Content Concept, source type, source id, evidence type, optional score, confidence, metadata, and creation time.
+
+---
+
+## Mastery Decision
+
+A deterministic decision derived from Learning Evidence for one learner and one Content Concept.
+
+Mastery Decisions are explicit records and may be `not_enough_evidence`, `not_mastered`, `emerging`, `mastered`, or `needs_review`.
+
+---
+
+## Mastery Profile
+
+The current mastery state for one learner and one Content Concept.
+
+A Mastery Profile summarizes the latest decision, confidence, evidence count, and most recent evidence timestamp. It does not unlock curriculum or perform learner progression.
+
+---
+
+## Assessment Strategy
+
+A deterministic plan for what kind of assessment evidence should be collected for a Content Concept.
+
+Assessment Strategies recommend item types, evidence requirements, ordered steps, and estimated difficulty. They do not create Assessment Items or grade learner responses.
+
+---
+
+## Assessment Blueprint
+
+A planning artifact that combines a Content Concept with an Assessment Strategy.
+
+Assessment Blueprints identify the concept, allowed item types, recommended item count, mastery signal, evidence requirements, and strategy steps.
+
+---
+
+## Assessment Evidence Requirement
+
+A requirement describing what evidence type should be collected and the minimum confidence expected.
+
+Evidence Requirements guide future assessment construction but do not by themselves award mastery or unlock progression.
+
+---
+
+## Item Bank
+
+The reusable repository of authored assessment items for Content Concepts.
+
+The Item Bank supports review, quality marking, options, and assessment linking. It does not generate questions or grade learner responses.
+
+---
+
+## Item Bank Entry
+
+A reusable authored assessment item connected to a Content Concept.
+
+Item Bank Entries include item type, prompt, explanation, difficulty, review status, quality status, optional author, metadata, and timestamps.
+
+---
+
+## Item Option
+
+An ordered option belonging to an Item Bank Entry.
+
+Item Options may record whether an option is correct, but PI-5D does not use that field to grade learner responses.
+
+---
+
+## Assessment Item Bank Link
+
+An ordered link between an Assessment and an Item Bank Entry.
+
+Assessment Item Bank Links allow assessments to reuse item bank entries while preserving assessment-specific ordering.
+
+---
+
+## Assessment Delivery Session
+
+A learner's active delivery experience for an Assessment.
+
+Assessment Delivery Sessions track status, linked attempt, current sequence number, timestamps, and metadata. They do not grade responses or update mastery.
+
+---
+
+## Assessment Delivery Item
+
+The ordered item presented during an Assessment Delivery Session.
+
+Assessment Delivery Items may wrap an Assessment Item or an Assessment Item Bank Link while preserving sequence order.
+
+---
+
+## Assessment Delivery State
+
+The lifecycle state of an Assessment Delivery Session.
+
+Supported states are `created`, `active`, `paused`, `submitted`, `completed`, and `abandoned`.
+
+---
+
+## Grading Platform
+
+The assessment capability layer that evaluates submitted Assessment Responses and records explicit Evaluation and Result artifacts.
+
+The Grading Platform does not award mastery, unlock progression, remediate learners, or generate questions.
+
+---
+
+## Assessment Evaluation
+
+An explicit evaluation record for one Assessment Response.
+
+Assessment Evaluations include score, max score, correctness, feedback, evaluator type, metadata, and timestamps.
+
+---
+
+## Assessment Result
+
+An aggregate result record for an Assessment Attempt.
+
+Assessment Results summarize total score, max score, percentage, optional pass/fail state, metadata, and timestamps.
+
+---
+
+## Deterministic Evaluator
+
+A rule-based evaluator that grades supported response types using stored answer keys.
+
+PI-5F supports deterministic grading for multiple choice and true/false responses when answer keys are available.
+
+---
+
+## Evidence Integration
+
+The process of converting evaluated assessment artifacts into canonical Learning Evidence.
+
+Evidence Integration preserves source provenance and does not update mastery, unlock progression, or trigger remediation.
+
+---
+
+## Evidence Provenance
+
+The source identity and metadata that explain where a Learning Evidence record came from.
+
+Evidence Provenance includes source type, source id, related assessment identifiers, scores, percentages, and evaluator details where available.
+
+---
+
+## Integrated Evidence
+
+Learning Evidence created from an evaluated assessment artifact.
+
+Integrated Evidence can be consumed by future mastery workflows but is not itself a Mastery Decision.
+
+---
+
 ## Lesson Snapshot
 
 A versioned, reviewable representation of a teaching session.
@@ -432,7 +650,7 @@ Attempts are immutable historical records.
 
 A determination that sufficient understanding has been demonstrated.
 
-Mastery is awarded through approved business rules.
+Mastery is recorded through approved business rules as an explicit Mastery Decision and current Mastery Profile.
 
 ---
 
@@ -449,6 +667,186 @@ No AI component may bypass Sequential Unlock rules.
 Structured support provided after unsuccessful assessment.
 
 Remediation never skips learning content.
+
+---
+
+## Remediation Platform
+
+The evidence-oriented capability that transforms Learning Evidence into structured intervention plans.
+
+The Remediation Platform is not assessment-specific. Assessment is one evidence producer among many.
+
+---
+
+## Remediation Plan
+
+The overall remediation intervention for one learner and one Content Concept.
+
+Remediation Plans move through explicit lifecycle states: pending, active, completed, escalated, cancelled, and closed.
+
+---
+
+## Remediation Recommendation
+
+A recommended intervention generated from evidence patterns.
+
+Recommendations may include lesson review, repeated activity, Ariel teach-back, additional questions, source material review, simulation, or educator review.
+
+---
+
+## Remediation Activity
+
+Actual remediation work assigned within a plan.
+
+Activities are future evidence producers and may include lesson replay, practice assessment, simulation, Ariel teach-back, programming task, or educator review.
+
+---
+
+## Remediation Outcome
+
+The recorded result of remediation work.
+
+Supported outcomes are improved, unchanged, regressed, and escalated.
+
+---
+
+## Assessment Review Platform
+
+The quality assurance capability for assessments, reusable questions, and observed assessment performance.
+
+The Assessment Review Platform is separate from assessment delivery, grading, evidence integration, and remediation.
+
+---
+
+## Assessment Review
+
+The review record for an Assessment.
+
+Assessment Reviews move through explicit review states: draft, pending_review, in_review, approved, needs_revision, rejected, and archived.
+
+---
+
+## Question Review
+
+The review record for an Item Bank Entry.
+
+Question Reviews support reusable item quality control outside any single assessment attempt.
+
+---
+
+## Quality Finding
+
+A recorded issue, concern, or quality observation discovered during review.
+
+Quality Findings may be linked to an Assessment Review or Question Review.
+
+---
+
+## Review Decision
+
+An explicit outcome of a quality review.
+
+Supported decisions include approved, needs_revision, rejected, and archived.
+
+---
+
+## Difficulty Calibration
+
+A record comparing expected item difficulty with observed learner performance.
+
+Difficulty Calibration preserves calibration direction, sample size, success rate, and rationale.
+
+---
+
+## Reviewer Assignment
+
+A record that a reviewer has been assigned to an Assessment Review or Question Review.
+
+Reviewer Assignments support workload tracking, reassignment, and completion history.
+
+---
+
+## Content Intelligence Platform
+
+The ingestion capability that transforms raw learning-resource files into structured parsing artifacts and candidate academic content.
+
+The Content Intelligence Platform is not the academic system of record.
+
+---
+
+## Content Import Job
+
+The top-level import record for processing one learning resource file.
+
+It tracks lifecycle, OCR decisions, confidence scores, and diagnostics.
+
+---
+
+## Content Processing Job
+
+The orchestration aggregate that owns asynchronous processing state between a durable uploaded file and downstream parser stages.
+
+Content Processing Jobs track stage, status, progress, active attempt, cancellation, and typed failure information.
+
+---
+
+## Processing Attempt
+
+An immutable historical execution attempt for a Content Processing Job.
+
+Retries create new Processing Attempts rather than rewriting old execution history.
+
+---
+
+## Processing Diagnostic
+
+A stage-specific diagnostic record attached to both a Content Processing Job and a Processing Attempt.
+
+Processing Diagnostics preserve safe public messages and structured operational details.
+
+---
+
+## Processing Stage Result
+
+A durable completion envelope for one stage within one Processing Attempt.
+
+Stage Results provide idempotency and stable output references for future processing capabilities.
+
+---
+
+## Parsed Document
+
+The normalized parsed representation of an imported file.
+
+---
+
+## Parsed Section
+
+A structured section candidate detected from a Parsed Document.
+
+---
+
+## Parsed Concept Candidate
+
+A candidate concept extracted from a Parsed Section before academic publication.
+
+---
+
+## Content Extraction Result
+
+The recorded extraction output including extraction method, text sufficiency, OCR usage, and structural metadata.
+
+---
+
+## Content Validation Finding
+
+A structured issue discovered during import validation.
+
+---
+
+## Parser Pipeline Run
+
+An execution record for a single content intelligence pipeline run.
 
 ---
 
@@ -610,3 +1008,28 @@ Throughout Abbot Study:
 When introducing new features, contributors should extend this document before introducing new terminology into the codebase.
 
 A shared language is a core architectural asset. Consistent terminology is considered part of the system's design, not merely its documentation.
+### Content extraction evidence
+
+* **Source Document Profile** — immutable inspection evidence for one job attempt and source checksum.
+* **Document Extraction** — versioned aggregate describing one completed extraction run.
+* **Extracted Block** — ordered source evidence with an explicit origin; it is not an academic section or concept.
+* **Evidence Origin** — whether a block was explicit in the source, inferred from layout/style/OCR, or supplied as a parser default.
+* **Document Hierarchy** — one versioned reconstruction of structural relationships for an extraction result.
+* **Hierarchy Node** — a source-ranged structural interpretation, not an Academic Platform section.
+* **Block Classification** — an immutable interpretation of whether extraction evidence is body content, excluded noise, or review-required evidence.
+* **Document Segmentation** — one versioned semantic grouping run over a document hierarchy.
+* **Semantic Segment** — a meaningful, source-traceable content unit; it is neither a concept nor a retrieval chunk.
+* **Academic Import Proposal** — a versioned recommendation for translating document understanding into Academic Platform content.
+* **Proposed Section** — a reviewable section recommendation backed by a hierarchy node.
+* **Proposed Concept** — a reviewable concept recommendation backed by meaningful semantic and extracted-block evidence.
+* **Proposal Decision** — an auditable governance decision independent from publication.
+
+## Retrieval Foundation
+
+* **Retrieval Chunk** — the smallest searchable, versioned projection of approved Academic content with immutable provenance.
+* **Retrieval Chunk Collection** — all chunks generated for one Academic Population version and chunk policy.
+* **Retrieval Index Job** — a replay-safe record of chunking, embedding, indexing, diagnostics, and readiness.
+* **Retrieval Readiness** — `not_indexed`, `indexing`, `indexed`, `stale`, or `failed`; only `indexed` can gate teaching readiness.
+* **Grounding Package** — the exclusive durable evidence contract from Retrieval to Teaching.
+* **Grounding Citation** — a reproducible reference from a ranked chunk through Academic, proposal, population, semantic segment, and source-page provenance.
+* **Academic Population Job** — the idempotent publication aggregate that applies only approved proposal items.

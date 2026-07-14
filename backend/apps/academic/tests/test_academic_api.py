@@ -13,7 +13,7 @@ from apps.academic.domain.models import (
     ResourceIngestionJob,
     Subject,
 )
-from apps.users.domain.models import Institution, User
+from apps.users.domain.models import Institution, InstitutionMembership, InstitutionRole, User
 
 
 class AcademicApiTests(APITestCase):
@@ -21,6 +21,12 @@ class AcademicApiTests(APITestCase):
         self.user = User.objects.create_user(email="admin@example.com", password="secret")
         self.client.force_authenticate(user=self.user)
         self.institution = Institution.objects.create(name="Demo School", slug="demo-school")
+        InstitutionMembership.objects.create(
+            user=self.user,
+            institution=self.institution,
+            role=InstitutionRole.ADMINISTRATOR,
+            is_active=True,
+        )
         self.subject = Subject.objects.create(institution=self.institution, code="MATH", name="Mathematics")
         self.curriculum = Curriculum.objects.create(
             subject=self.subject,
@@ -213,3 +219,12 @@ class AcademicApiTests(APITestCase):
         response = self.client.get(reverse("academic-subject-list"))
 
         self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+
+    def test_non_member_cannot_see_institution_owned_subjects(self):
+        other_user = User.objects.create_user(email="other@example.com", password="secret")
+        self.client.force_authenticate(user=other_user)
+
+        response = self.client.get(reverse("academic-subject-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, [])
