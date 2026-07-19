@@ -196,7 +196,8 @@ Compatibility mapping:
 
 * `created` or `queued` -> legacy `pending`
 * active processing stages -> legacy `processing`
-* `ready_for_review` or `ready_for_teaching` -> legacy `completed`
+* `ready_for_review` -> legacy `processing` compatibility value plus authoritative `processing_status=ready_for_review` and `review_required=true`
+* `ready_for_teaching` -> legacy `completed`
 * `failed` -> legacy `failed`
 * `cancelled` -> legacy `cancelled`
 
@@ -221,6 +222,14 @@ The existing import-job polling contract remains available and now projects:
 * retry/cancel flags
 
 This keeps the frontend thin while allowing the new orchestration layer to become authoritative.
+
+### Governed review pause
+
+`READY_FOR_REVIEW` is terminal for automatic processing but not terminal for the full publication lifecycle. Technical document processing and proposal validation have completed successfully; the state is neither active processing nor failure. Population and retrieval indexing remain pending until an authorized proposal decision satisfies the governance boundary.
+
+Status consumers resolve lifecycle state in this order: the authoritative `ContentProcessingJob` status, proposal/review state, then the legacy import status. The legacy status remains compatibility metadata and must not keep polling active when the authoritative job is ready for review. Polling stops at `ready_for_review`, `ready_for_teaching`, `failed`, `cancelled`, and `deleted`.
+
+The ordinary import status response may expose bounded proposal summary counts and confidence. Proposed sections and concepts are recommendations, not Academic Platform records. Published and study-available counts remain zero until approved population completes, and teaching readiness additionally requires retrieval readiness. A progress value of 98% at the review gate represents publication and indexing still pending; it must be presented as “Ready for academic review,” not as an active 98% processing state.
 
 ## PI-6C.2 Layout-Aware Inspection and Extraction
 
@@ -265,6 +274,12 @@ For temporary compatibility, eligible body hierarchy nodes and semantic segments
 
 ## PI-6C.4 Academic Import Proposals and Population
 
+PI-6C.6 hardens the boundary before population. Early dotted-leader entries establish a bounded TOC region, including intervening navigation lines and split page-number forms; early publication month/year and standalone Roman page markers remain excluded front matter. TOC titles are reconciled canonically against body headings and material mismatches require review.
+
+Semantic segmentation preserves heading and body relationships separately. Each segment records body-block counts, substantive body character counts, supporting body block identifiers, and an explicit heading-only marker. Heading-only segments cannot qualify as explanations or concepts.
+
+Proposal validation applies blocking evidence, canonical-duplicate, absolute-quantity, and page-ratio rules. Automatic acceptance is a versioned policy evaluation requiring no blocking findings, no upstream review recommendation, no proposal review requirement, and sufficient aggregate confidence. Ineligible proposals stop at `READY_FOR_REVIEW`; population requires an approval decision newer than the latest validation snapshot. Legacy projection remains compatibility-only; authoritative status and explicit review metadata prevent its `processing` value from being interpreted as active work.
+
 `VALIDATING` is the governed boundary between document interpretation and academic truth. It consumes the active `DocumentHierarchy` and `DocumentSegmentation` and creates a versioned `AcademicImportProposal`. The deterministic proposal engine recommends sections and concepts; it never writes Academic Platform records.
 
 Each `ProposedSection` references its hierarchy node. Each `ProposedConcept` references an eligible semantic segment and requires meaningful supporting text. `ProposalEvidence` connects every proposed item to hierarchy, semantic segment, extracted blocks, pages, evidence strength, and bounded reasoning metadata. Headings, TOC entries, dates, references, malformed fallback labels, empty text, and unsupported segments cannot independently become concepts.
@@ -288,3 +303,8 @@ Readiness is `NOT_INDEXED`, `INDEXING`, `INDEXED`, `STALE`, or `FAILED`. Populat
 `POPULATING` accepts only an approved proposal in `ready_for_population`. An `AcademicPopulationJob` owns publication and records created/updated section and concept counts, versions, checksum, warnings, failure state, and timestamps. Proposed items retain one-to-one mappings to their published Academic records, making replay and retries idempotent. Reprocessing can update existing ordered records without duplicating them.
 
 Published sections and concepts inherit the approved governance decision and retain proposal provenance. The learning resource activation behavior remains compatible. Population does not index content, create retrieval chunks, or mark teaching readiness; `INDEXING` remains a compatibility boundary until PI-6C.5.
+# PI-6D.1 Review Handoff
+
+`READY_FOR_REVIEW` is consumed by the Academic Proposal Review bounded context. Approval writes an `ApprovedProposalProjection` and dispatches the existing `POPULATING` stage after transaction commit. Population rejects approved proposals that lack a matching projection checksum. Reprocessing creates a new processing attempt and preserves the superseded proposal and review history.
+
+PI-6D.2 supersedes the direct approval-to-population dispatch described above. Reviewed approval now stops at an immutable projection with status `READY_FOR_POPULATION`. It publishes `academic_review.ready_for_population`; PI-6D.3 will consume that event and projection. No approval HTTP request or PI-6D.2 application service invokes population.

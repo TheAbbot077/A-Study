@@ -193,7 +193,7 @@ class PdfDocumentExtractor:
                 ocr_engine = "tesseract"
         blocks = [BlockEvidence(index, block.page_sequence_number, block.block_type, block.evidence_origin, block.raw_text, block.normalized_text, block.page_reference, block.geometry, block.typography, block.structural_hints, block.source_method, block.table_reference, block.image_reference, block.confidence, block.metadata) for index, block in enumerate(sorted(blocks, key=lambda block: (block.page_reference.get("page_index", 0), block.page_sequence_number, block.sequence_number)))]
         method = ExtractionMethod.PDF_MIXED if native_pages and ocr_count else ExtractionMethod.PDF_OCR if ocr_count else ExtractionMethod.PDF_NATIVE
-        return ExtractionEvidence(method, tuple(blocks), len(reader.pages), native_pages=native_pages, ocr_pages=ocr_count, ocr_engine=ocr_engine, warnings=tuple(warnings))
+        return ExtractionEvidence(method, tuple(blocks), len(reader.pages), native_text_pages=native_pages, ocr_pages=ocr_count, ocr_engine=ocr_engine, warnings=tuple(warnings))
 
 
 class DocxDocumentExtractor:

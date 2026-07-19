@@ -16,7 +16,7 @@ export function LogoutButton({ className = "" }: LogoutButtonProps) {
 
     try {
       await logout();
-      window.location.assign("/");
+      window.location.replace("/");
     } finally {
       setPending(false);
     }

@@ -5,6 +5,8 @@ import json
 import re
 from dataclasses import asdict
 from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
 
 from apps.core.events import BusinessEvent, EventPublisher
 from apps.retrieval.domain.models import ChunkProjection
@@ -111,6 +113,13 @@ class IndexAcademicPopulationService:
     @transaction.atomic
     def execute(self, population_job):
         index_job, _ = RetrievalIndexJob.objects.get_or_create(population_job=population_job, retrieval_version=self.builder.RETRIEVAL_VERSION, embedding_version=self.embedding_provider.version)
+        if self._resource_is_retired(population_job):
+            index_job.status, index_job.failure_code, index_job.completed_at = RetrievalReadiness.STALE, "resource_deleted", timezone.now()
+            index_job.save(update_fields=["status", "failure_code", "completed_at"])
+            if index_job.collection_id:
+                index_job.collection.readiness = RetrievalReadiness.STALE
+                index_job.collection.save(update_fields=["readiness"])
+            return index_job
         if index_job.status == RetrievalReadiness.INDEXED:
             return index_job
         index_job.start(); index_job.save()
@@ -123,6 +132,12 @@ class IndexAcademicPopulationService:
             embeddings = self.embedding_provider.embed_batch([chunk.text for chunk in chunks])
             self.events.publish(BusinessEvent.create("retrieval.embedding_completed", payload={"index_job_id": str(index_job.id), "embedding_version": self.embedding_provider.version, "chunk_count": len(chunks)}))
             indexed = self.index.index(chunks, embeddings, collection=collection, population_job=population_job)
+            if self._resource_is_retired(population_job, refresh=True):
+                index_job.status, index_job.failure_code, index_job.completed_at = RetrievalReadiness.STALE, "resource_deleted", timezone.now()
+                index_job.save(update_fields=["status", "failure_code", "completed_at"])
+                collection.readiness, collection.completed_at = RetrievalReadiness.STALE, index_job.completed_at
+                collection.save(update_fields=["readiness", "completed_at"])
+                return index_job
             checksum = _checksum([collection.checksum, indexed, self.index.version])
             index_job.statistics = {"chunk_count": len(chunks), "indexed_count": indexed, "index_version": self.index.version}
             index_job.complete(indexed, checksum); index_job.save()
@@ -131,6 +146,7 @@ class IndexAcademicPopulationService:
             self.events.publish(BusinessEvent.create("retrieval.index_completed", payload={"index_job_id": str(index_job.id), "indexed_count": indexed}))
             self.events.publish(BusinessEvent.create("retrieval.readiness_changed", payload={"collection_id": str(collection.id), "readiness": RetrievalReadiness.INDEXED}))
             return index_job
+
         except Exception:
             index_job.fail("index_failed"); index_job.save()
             RetrievalDiagnostic.objects.create(index_job=index_job, severity="error", code=index_job.failure_code, message="Retrieval indexing failed.")
@@ -138,6 +154,30 @@ class IndexAcademicPopulationService:
                 index_job.collection.readiness = RetrievalReadiness.FAILED; index_job.collection.save(update_fields=["readiness"])
             self.events.publish(BusinessEvent.create("retrieval.index_failed", payload={"index_job_id": str(index_job.id), "failure_code": index_job.failure_code}))
             return index_job
+
+    @staticmethod
+    def _resource_is_retired(population_job, refresh=False):
+        if refresh:
+            population_job.job.refresh_from_db(fields=["status"])
+            population_job.proposal.resource.refresh_from_db(fields=["status"])
+        return population_job.job.status == "deleted" or population_job.proposal.resource.status == "archived"
+
+
+class RetireRetrievalResourceService:
+    """Remove a resource from retrieval eligibility while retaining provenance."""
+
+    def __init__(self, event_publisher=None):
+        self.events = event_publisher or EventPublisher()
+
+    @transaction.atomic
+    def retire(self, resource):
+        collections = RetrievalChunkCollection.objects.filter(resource=resource)
+        collection_ids = list(collections.values_list("id", flat=True))
+        index_jobs = RetrievalIndexJob.objects.filter(Q(collection_id__in=collection_ids) | Q(population_job__proposal__resource=resource))
+        retired_index_jobs = index_jobs.update(status=RetrievalReadiness.STALE, failure_code="resource_deleted", completed_at=timezone.now())
+        retired_collections = collections.update(readiness=RetrievalReadiness.STALE, completed_at=timezone.now())
+        self.events.publish(BusinessEvent.create("retrieval.resource_retired", payload={"resource_id": str(resource.id), "collection_count": retired_collections, "index_job_count": retired_index_jobs}))
+        return {"collection_count": retired_collections, "index_job_count": retired_index_jobs}
 
 
 class BuildGroundingPackageService:

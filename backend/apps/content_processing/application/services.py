@@ -260,9 +260,12 @@ class LegacyImportProjectionService:
             legacy_job.error_message = (job.failure or {}).get("public_message", "")
         elif job.status == JobStatus.DELETED:
             return
-        elif job.status in {JobStatus.READY_FOR_REVIEW, JobStatus.READY_FOR_TEACHING}:
+        elif job.status == JobStatus.READY_FOR_TEACHING:
             legacy_job.status = legacy_job.Status.COMPLETED
             legacy_job.error_message = ""
+        elif job.status == JobStatus.READY_FOR_REVIEW:
+            legacy_job.status = legacy_job.Status.PROCESSING
+            legacy_job.error_message = "Review is required before academic content can be published."
         elif job.current_stage in {ProcessingStage.CREATED, ProcessingStage.QUEUED}:
             legacy_job.status = legacy_job.Status.PENDING
         else:

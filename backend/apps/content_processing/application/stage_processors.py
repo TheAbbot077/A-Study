@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from apps.content_processing.application.document_services import ExtractDocumentService, InspectSourceDocumentService
 from apps.content_processing.application.structure_services import BuildSemanticSegmentsService, ReconstructDocumentHierarchyService
-from apps.content_processing.application.proposal_services import ApproveProposalService, GenerateAcademicImportProposalService, PopulateAcademicPlatformService
+from apps.content_processing.application.proposal_services import AutomaticProposalAcceptanceService, ApproveProposalService, GenerateAcademicImportProposalService, PopulateAcademicPlatformService
 from apps.content_processing.application.services import DiagnosticRecord, ProcessingStageExecutionResult
 from apps.content_processing.domain.models import ContentProcessingJob, DiagnosticSeverity, JobStatus, ProcessingStage
 from apps.content_processing.models import SourceDocumentProfile
@@ -62,22 +62,26 @@ class BuildSemanticSegmentsProcessor:
 
 
 class GenerateAcademicImportProposalProcessor:
-    def __init__(self, service=None, approval_service=None) -> None:
+    def __init__(self, service=None, approval_service=None, acceptance_service=None) -> None:
         self.service = service or GenerateAcademicImportProposalService()
         self.approval_service = approval_service or ApproveProposalService()
+        self.acceptance_service = acceptance_service or AutomaticProposalAcceptanceService()
 
     def supports(self, stage):
         return stage == ProcessingStage.VALIDATING
 
     def execute(self, context):
         proposal, warnings = self.service.execute(context)
-        if proposal.review_state == "ready_for_review":
+        acceptance = self.acceptance_service.evaluate(proposal)
+        if proposal.review_state == "ready_for_review" and acceptance.eligible:
             self.approval_service.approve(
                 proposal,
-                reason="Compatibility review decision preserving the existing automatic import workflow.",
-                compatibility_approval=True,
+                reason="Approved by the explicit deterministic automatic-acceptance policy.",
+                automatic_acceptance=True,
+                policy_version=acceptance.policy_version,
+                eligibility_reasons=acceptance.reasons,
             )
-        next_stage = ProcessingStage.POPULATING
+        next_stage = ProcessingStage.POPULATING if acceptance.eligible else None
         return ProcessingStageExecutionResult(ProcessingStage.VALIDATING, next_stage, ContentProcessingJob.STAGE_PROGRESS[ProcessingStage.VALIDATING], _diagnostics(ProcessingStage.VALIDATING, warnings), {"academic_import_proposal_id": str(proposal.id), "review_state": proposal.review_state, "population_state": proposal.population_state, "section_count": proposal.statistics.get("section_count", 0), "concept_count": proposal.statistics.get("concept_count", 0)}, proposal.result_checksum)
 
 

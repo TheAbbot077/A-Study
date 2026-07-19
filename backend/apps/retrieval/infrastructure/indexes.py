@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from django.db import connection, transaction
+from django.db.models import Q
 
 from apps.retrieval.domain.policy import RankingPolicy
 from apps.retrieval.domain.queries import RetrievalRanking, RetrievalResult
@@ -54,7 +55,9 @@ class DjangoHybridRetrievalIndex:
         count, _ = RetrievalChunk.objects.filter(id__in=chunk_ids).delete(); return count
 
     def search(self, query, embedding):
-        queryset = self._filtered(query.filters).filter(collection__readiness=RetrievalReadiness.INDEXED)
+        queryset = self._filtered(query.filters).filter(
+            Q(collection__readiness=RetrievalReadiness.INDEXED) | Q(generation__status="active")
+        )
         results = []
         for chunk in queryset:
             vector_score, keyword_score = _cosine(embedding, chunk.embedding), _keyword(query.text, chunk.text)
@@ -67,7 +70,12 @@ class DjangoHybridRetrievalIndex:
         return [RetrievalResult(str(chunk.id), chunk.text, chunk.token_estimate, chunk.metadata, RetrievalRanking(0, 0, 0, self.ranking_policy.configuration_version)) for chunk in self._filtered(filters)]
 
     def health(self):
-        return {"status": "available", "version": self.version, "indexed_chunks": RetrievalChunk.objects.filter(collection__readiness=RetrievalReadiness.INDEXED).count()}
+        return {
+            "status": "available", "version": self.version,
+            "indexed_chunks": RetrievalChunk.objects.filter(
+                Q(collection__readiness=RetrievalReadiness.INDEXED) | Q(generation__status="active")
+            ).count(),
+        }
 
     def _filtered(self, filters):
         queryset = RetrievalChunk.objects.all()
@@ -98,4 +106,3 @@ class PostgreSQLPgvectorRetrievalIndex(DjangoHybridRetrievalIndex):
 
     def vector_distance_expression(self, parameter="%s"):
         return f"embedding_vector <=> {parameter}::vector"
-

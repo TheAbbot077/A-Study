@@ -137,10 +137,16 @@ class ContentImportJobSerializer(serializers.ModelSerializer):
     processing_stage = serializers.SerializerMethodField()
     processing_progress = serializers.SerializerMethodField()
     processing_stage_label = serializers.SerializerMethodField()
+    processing_message = serializers.SerializerMethodField()
     processing_attempt = serializers.SerializerMethodField()
     processing_warning_count = serializers.SerializerMethodField()
     can_retry_processing = serializers.SerializerMethodField()
     can_cancel_processing = serializers.SerializerMethodField()
+    review_required = serializers.SerializerMethodField()
+    ready_for_teaching = serializers.SerializerMethodField()
+    processing_failure = serializers.SerializerMethodField()
+    processing_completed_at = serializers.SerializerMethodField()
+    proposal = serializers.SerializerMethodField()
 
     class Meta:
         model = ContentImportJob
@@ -169,10 +175,16 @@ class ContentImportJobSerializer(serializers.ModelSerializer):
             "processing_stage",
             "processing_progress",
             "processing_stage_label",
+            "processing_message",
             "processing_attempt",
             "processing_warning_count",
             "can_retry_processing",
             "can_cancel_processing",
+            "review_required",
+            "ready_for_teaching",
+            "processing_failure",
+            "processing_completed_at",
+            "proposal",
             "started_at",
             "completed_at",
             "created_at",
@@ -202,6 +214,9 @@ class ContentImportJobSerializer(serializers.ModelSerializer):
         ]
 
     def get_status_detail(self, obj):
+        processing_job = getattr(obj, "processing_job", None)
+        if processing_job is not None and processing_job.status == "ready_for_review":
+            return "review_required"
         if obj.status == ContentImportJob.Status.COMPLETED and obj.validation_findings.exists():
             return "completed_with_warnings"
         return obj.status
@@ -258,6 +273,18 @@ class ContentImportJobSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    def get_processing_message(self, obj):
+        processing_job = getattr(obj, "processing_job", None)
+        if processing_job is None:
+            return obj.error_message or None
+        if processing_job.status == "ready_for_review":
+            return "Review is required before academic content can be published."
+        if processing_job.status == "ready_for_teaching":
+            return "Academic content is published and ready for teaching."
+        if processing_job.status == "failed":
+            return (processing_job.failure or {}).get("public_message") or obj.error_message or "Processing failed."
+        return None
+
     def get_processing_attempt(self, obj):
         processing_job = getattr(obj, "processing_job", None)
         return getattr(processing_job, "active_attempt_number", None)
@@ -281,6 +308,48 @@ class ContentImportJobSerializer(serializers.ModelSerializer):
         if processing_job is None:
             return False
         return processing_job.status == "active" and not processing_job.cancellation_requested
+
+    def get_review_required(self, obj):
+        processing_job = getattr(obj, "processing_job", None)
+        return bool(processing_job is not None and processing_job.status == "ready_for_review")
+
+    def get_ready_for_teaching(self, obj):
+        processing_job = getattr(obj, "processing_job", None)
+        return bool(processing_job is not None and processing_job.status == "ready_for_teaching")
+
+    def get_processing_failure(self, obj):
+        processing_job = getattr(obj, "processing_job", None)
+        failure = getattr(processing_job, "failure", None) if processing_job is not None else None
+        if not failure:
+            return None
+        return {
+            "code": failure.get("code"),
+            "stage": failure.get("stage"),
+            "message": failure.get("public_message"),
+        }
+
+    def get_processing_completed_at(self, obj):
+        processing_job = getattr(obj, "processing_job", None)
+        return getattr(processing_job, "completed_at", None)
+
+    def get_proposal(self, obj):
+        processing_job = getattr(obj, "processing_job", None)
+        if processing_job is None:
+            return None
+        proposal = processing_job.academic_import_proposals.order_by("-created_at").first()
+        if proposal is None:
+            return None
+        statistics = proposal.statistics or {}
+        return {
+            "id": str(proposal.id),
+            "status": proposal.review_state,
+            "decision": proposal.decision,
+            "population_state": proposal.population_state,
+            "proposed_section_count": int(statistics.get("section_count", 0) or 0),
+            "proposed_concept_count": int(statistics.get("concept_count", 0) or 0),
+            "confidence": proposal.confidence,
+            "blocking_finding_count": proposal.validations.filter(passed=False, severity="blocking").count(),
+        }
 
 
 class CreateImportJobSerializer(serializers.Serializer):

@@ -1033,3 +1033,14 @@ A shared language is a core architectural asset. Consistent terminology is consi
 * **Grounding Package** — the exclusive durable evidence contract from Retrieval to Teaching.
 * **Grounding Citation** — a reproducible reference from a ranked chunk through Academic, proposal, population, semantic segment, and source-page provenance.
 * **Academic Population Job** — the idempotent publication aggregate that applies only approved proposal items.
+# Academic Review Language
+
+- **Machine proposal**: immutable PI-6C recommendation and its evidence.
+- **Review session**: version-bound governed evaluation of one machine proposal.
+- **Review overlay**: item decisions, edits, moves, finding resolutions, and overrides without mutation of the proposal.
+- **Approved proposal projection**: immutable population input containing only accepted reviewed content.
+- **Review readiness**: all required items decided, blocking findings resolved, relationships valid, and proposal version current.
+- **Approval readiness snapshot**: durable, checksummed evaluation of one exact proposal and review-session version.
+- **Approval decision**: authorized, idempotent approval or rejection bound to a readiness snapshot and policy version.
+- **Approval version**: deterministic identity derived from proposal version, review-session version, policy version, and projection checksum.
+- **Ready for population**: an approved projection is durable and may be consumed by PI-6D.3; no Academic Platform records exist yet.

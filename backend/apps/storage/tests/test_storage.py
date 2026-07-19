@@ -78,3 +78,17 @@ def test_storage_service_delete_publishes(monkeypatch):
     publisher.publish.assert_called_once()
     event = publisher.publish.call_args.args[0]
     assert event.event_name == "storage.file_deleted"
+
+
+def test_storage_service_can_delete_contents_while_retaining_metadata():
+    provider = Mock(spec=StorageProvider)
+    publisher = Mock()
+    service = StorageService(provider=provider, event_publisher=publisher)
+    fake_file = Mock(id=uuid.uuid4(), stored_filename="abc123")
+
+    with patch("apps.storage.services.storage_service.StoredFile.objects") as objects:
+        service.delete_file_contents(fake_file)
+
+    provider.delete.assert_called_once_with("abc123")
+    objects.assert_not_called()
+    assert publisher.publish.call_args.args[0].event_name == "storage.file_contents_deleted"

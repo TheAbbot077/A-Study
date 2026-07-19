@@ -28,7 +28,7 @@ def test_explicit_docx_heading_is_source_grounded():
 
 def test_heading_policy_rejects_dates_urls_page_numbers_and_synthetic_titles():
     policy = HeadingPolicy()
-    for text in ["2026", "https://example.com", "notes.pdf", "Imported Content", "Concept 2Available"]:
+    for text in ["2026", "September 2019", "https://example.com", "notes.pdf", "Imported Content", "Concept 2Available"]:
         candidate, body = block(0, text, ExtractedBlockType.HEADING_1), block(1, "Supporting body text")
         assert policy.candidates([candidate, body], DocumentStyleAnalyzer().analyze([candidate, body]), included(candidate, body)) == []
 
@@ -53,3 +53,11 @@ def test_page_numbers_and_repeated_headers_are_preserved_but_excluded():
     _, classifications, _, _ = DeterministicHierarchyReconstructor().reconstruct(blocks)
     assert classifications["block-0"]["role"] == StructuralRole.PROBABLE_NOISE
     assert classifications["block-1"]["disposition"] == BlockDisposition.EXCLUDED
+
+
+def test_split_dotted_toc_region_owns_navigation_blocks_and_roman_markers():
+    blocks = [block(0, "Contents", page=2), block(1, "Chapter Three . . . . . 4 0", page=2), block(2, "ii", page=2), block(3, "Market Structure ................ 74", page=3), block(4, "1 Introduction", ExtractedBlockType.HEADING_1, page=8), block(5, "Substantive body content starts here.", page=8)]
+    _, classifications, _, _ = DeterministicHierarchyReconstructor().reconstruct(blocks)
+    for index in range(4):
+        assert classifications[f"block-{index}"]["disposition"] == BlockDisposition.EXCLUDED
+        assert classifications[f"block-{index}"]["role"] == StructuralRole.TABLE_OF_CONTENTS

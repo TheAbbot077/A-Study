@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback";
+import { useAuth } from "@/features/auth/AuthProvider";
 import {
   getLearningResource,
   getSubject,
@@ -14,7 +15,17 @@ import {
   type LearningResource,
   type Subject,
 } from "@/services/academic";
-import { deleteImportJob, listImportJobsForResource, type ContentImportJob } from "@/services/content-intelligence";
+import {
+  authoritativeProcessingStatus,
+  deleteImportJob,
+  isActivelyProcessing,
+  isProcessingFailed,
+  isReadyForTeaching,
+  isReviewRequired,
+  listImportJobsForResource,
+  processingStatusLabel,
+  type ContentImportJob,
+} from "@/services/content-intelligence";
 import { listConceptBrowserStates, startOrResumeConcept, type ConceptBrowserStatus } from "@/services/learning";
 
 type ResourceDetailProps = {
@@ -74,6 +85,7 @@ function statusBadgeClassName(tone: "available" | "progress" | "mastered" | "war
 }
 
 export function ResourceDetail({ resourceId }: ResourceDetailProps) {
+  const { user } = useAuth();
   const router = useRouter();
   const [resource, setResource] = useState<LearningResource | null>(null);
   const [subject, setSubject] = useState<Subject | null>(null);
@@ -208,7 +220,20 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
   }
 
   const lowConfidence = isLowConfidenceImport(importJob);
-  const readyForLearning = resource.resource_ready_for_learning || importJob?.resource_ready_for_learning;
+  const authoritativeStatus = authoritativeProcessingStatus(importJob);
+  const reviewRequired = isReviewRequired(importJob);
+  const reviewRoles = new Set(user?.institutions?.map((membership) => membership.role) ?? []);
+  const canOpenAcademicReview = Boolean(
+    user?.is_superuser ||
+      user?.is_staff ||
+      reviewRoles.has("reviewer") ||
+      reviewRoles.has("administrator") ||
+      reviewRoles.has("institution_owner") ||
+      reviewRoles.has("system_administrator"),
+  );
+  const activelyProcessing = isActivelyProcessing(importJob);
+  const processingFailed = isProcessingFailed(importJob);
+  const readyForLearning = isReadyForTeaching(importJob) || (!authoritativeStatus && Boolean(resource.resource_ready_for_learning || importJob?.resource_ready_for_learning));
 
   return (
     <section className="space-y-8">
@@ -251,18 +276,42 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
             </div>
             <div>
               <dt className="font-medium text-[var(--color-foreground)]">Import status</dt>
-              <dd className="mt-1 capitalize">{importJob?.status ?? "unknown"}</dd>
+              <dd className="mt-1">{processingStatusLabel(importJob)}</dd>
             </div>
           </dl>
 
-          {importJob && importJob.status !== "pending" && importJob.status !== "processing" ? (
+          {reviewRequired ? (
+            <div className="rounded-[var(--radius-md)] border border-[var(--color-primary)]/50 p-4">
+              <h2 className="text-lg font-semibold text-[var(--color-foreground)]">Ready for review</h2>
+              <p className="mt-2 text-sm text-[var(--color-muted-foreground)]">
+                Document processing is complete. Academic review is required before sections and concepts are published.
+              </p>
+              {importJob?.proposal ? (
+                <dl className="mt-4 grid gap-3 text-sm text-[var(--color-muted-foreground)] sm:grid-cols-3">
+                  <div><dt>Proposed sections</dt><dd className="font-medium text-[var(--color-foreground)]">{importJob.proposal.proposed_section_count}</dd></div>
+                  <div><dt>Proposed concepts</dt><dd className="font-medium text-[var(--color-foreground)]">{importJob.proposal.proposed_concept_count}</dd></div>
+                  <div><dt>Confidence</dt><dd className="font-medium text-[var(--color-foreground)]">{(importJob.proposal.confidence * 100).toFixed(1)}%</dd></div>
+                </dl>
+              ) : null}
+              <p className="mt-4 text-sm text-[var(--color-muted-foreground)]">
+                No academic sections or concepts have been published yet.
+              </p>
+              {canOpenAcademicReview && importJob?.proposal?.id ? (
+                <Link className="mt-4 inline-flex min-h-10 items-center rounded-[var(--radius-md)] border border-[var(--color-primary)] px-4 text-sm font-medium text-[var(--color-primary)]" href={`/dashboard/academic-review/${importJob.proposal.id}`}>
+                  Review proposal
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
+
+          {importJob && !activelyProcessing ? (
             <div className="flex flex-wrap gap-3">
               <button
                 className="inline-flex min-h-10 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-danger)]/60 px-4 text-sm font-medium text-[var(--color-danger)] transition hover:bg-[var(--color-danger)]/10"
                 onClick={() => setShowDeleteConfirm((current) => !current)}
                 type="button"
               >
-                {importJob.status === "failed" || importJob.status === "cancelled" ? "Delete failed upload" : "Delete document"}
+                {processingFailed || importJob.status === "cancelled" ? "Delete failed upload" : "Delete document"}
               </button>
             </div>
           ) : null}
@@ -295,7 +344,7 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
             <div className="rounded-[var(--radius-md)] border border-[var(--color-danger)]/50 p-4">
               <div className="space-y-3">
                 <h2 className="text-base font-semibold text-[var(--color-foreground)]">
-                  {importJob.status === "failed" || importJob.status === "cancelled" ? "Delete failed upload" : "Delete document"}
+                  {processingFailed || importJob.status === "cancelled" ? "Delete failed upload" : "Delete document"}
                 </h2>
                 <p className="text-sm text-[var(--color-muted-foreground)]">
                   This removes the uploaded file, processing history, and generated outline for {resource.title}.
@@ -413,11 +462,13 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
 
         {!readyForLearning ? (
           <EmptyState
-            title="Resource not ready for learning yet"
+            title={reviewRequired ? "Academic review required" : "Resource not ready for learning yet"}
             description={
-              importJob?.status === "failed"
+              reviewRequired
+                ? "Processing is complete, but no academic sections or concepts have been published. Study access will remain unavailable until an authorized review is completed."
+                : processingFailed
                 ? "This upload failed before a learning-ready outline could be created. Return to the subject page to retry or delete it."
-                : importJob?.status === "pending" || importJob?.status === "processing"
+                : activelyProcessing
                   ? "Import is still running. This outline will unlock when the backend marks the resource ready for learning."
                   : "The backend has not marked this resource ready for learning yet."
             }
@@ -426,9 +477,9 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
           <EmptyState
             title="No concepts available yet"
             description={
-              importJob?.status === "failed"
+              processingFailed
                 ? "This import failed before a browsable outline could be created. Return to the subject page to retry and review the failure details."
-                : importJob?.status === "pending" || importJob?.status === "processing"
+                : activelyProcessing
                   ? "This resource is still being processed. Refresh after processing completes to browse sections and concepts."
                   : "This resource has not produced a browsable concept outline yet. Review the source file and import warnings."
             }

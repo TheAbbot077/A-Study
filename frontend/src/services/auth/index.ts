@@ -82,6 +82,7 @@ async function authPost<TResponse>(
 export async function getCurrentUser(): Promise<AuthUser | null> {
   const response = await fetch(`${API_BASE_URL.replace(/\/$/, "")}/${AUTH_ENDPOINTS.currentUser}`, {
     method: "GET",
+    cache: "no-store",
     credentials: "include",
     headers: {
       Accept: "application/json",

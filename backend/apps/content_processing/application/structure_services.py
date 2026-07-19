@@ -20,10 +20,10 @@ from apps.content_processing.models import ContentProcessingJob, DocumentExtract
 
 
 RECONSTRUCTOR_NAME = "deterministic-evidence-reconstructor"
-RECONSTRUCTOR_VERSION = "6c3-reconstructor-1"
+RECONSTRUCTOR_VERSION = "6c6-reconstructor-1"
 SEGMENTER_NAME = "deterministic-semantic-segmenter"
-SEGMENTER_VERSION = "6c3-segmenter-1"
-STRUCTURE_CONFIGURATION_VERSION = "6c3-policy-1"
+SEGMENTER_VERSION = "6c6-segmenter-1"
+STRUCTURE_CONFIGURATION_VERSION = "6c6-policy-1"
 
 
 class StructurePolicy:
@@ -33,6 +33,14 @@ class StructurePolicy:
     fallback_blocks_per_group = 20
     repeated_noise_ratio = .6
     maximum_diagnostics = 100
+    maximum_toc_pages = 12
+    early_metadata_pages = 12
+    maximum_heuristic_node_ratio = .60
+    maximum_navigation_noise_ratio = .20
+    maximum_nodes_per_page = 4.0
+    maximum_segments_per_page = 8.0
+    maximum_heading_only_segment_ratio = .15
+    maximum_toc_mismatch_ratio = .35
 
 
 class SegmentationPolicy:
@@ -89,7 +97,7 @@ class DocumentStyleAnalyzer:
 
 class HeadingPolicy:
     _numbered = re.compile(r"^(?:(chapter|part|section|appendix)\s+)?([A-Z]|[IVXLCDM]+|\d+(?:\.\d+){0,7})\b", re.I)
-    _date = re.compile(r"^(?:\d{1,2}[-/.]){2}\d{2,4}$|^(?:19|20)\d{2}$")
+    _date = re.compile(r"^(?:\d{1,2}[-/.]){2}\d{2,4}$|^(?:19|20)\d{2}$|^(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+(?:19|20)\d{2}$", re.I)
     _url = re.compile(r"^(?:https?://|www\.)|@|\.(?:pdf|docx?)$", re.I)
     _synthetic = re.compile(r"^(?:imported content|document content|untitled section|section\s+\d+|concept\s*\d+available)$", re.I)
 
@@ -148,10 +156,24 @@ class DeterministicHierarchyReconstructor:
             warnings.append({"code": "fallback_hierarchy_generated", "message": "No trustworthy heading hierarchy was found; conservative source groups were generated."})
         if any(value["disposition"] == BlockDisposition.REVIEW_REQUIRED for value in classifications.values()):
             warnings.append({"code": "uncertain_noise_classification", "message": "Some possible noise remains available for review."})
-        toc_titles = [re.sub(r"\.{3,}.*$", "", (block.normalized_text or "")).strip().lower() for block in blocks if classifications[str(block.id)]["role"] == StructuralRole.TABLE_OF_CONTENTS and (block.normalized_text or "").strip()]
-        body_titles = [candidate.candidate_title.strip().lower() for candidate in headings]
-        if toc_titles and body_titles and not any(title in body_titles for title in toc_titles if title not in {"contents", "table of contents"}):
-            warnings.append({"code": "toc_body_mismatch", "message": "Table-of-contents evidence did not match reconstructed body headings."})
+        canonical = lambda value: re.sub(r"[^a-z0-9]+", " ", re.sub(r"(?:\.\s*){2,}.*$", "", value.lower())).strip()
+        toc_titles = [canonical(block.normalized_text or "") for block in blocks if classifications[str(block.id)]["role"] == StructuralRole.TABLE_OF_CONTENTS and (block.normalized_text or "").strip()]
+        body_titles = [canonical(candidate.candidate_title) for candidate in headings]
+        eligible_toc = [title for title in toc_titles if title not in {"contents", "table of contents"}]
+        matched = [title for title in eligible_toc if title in body_titles]
+        unmatched = [title for title in eligible_toc if title not in body_titles]
+        ambiguous = [title for title in eligible_toc if body_titles.count(title) > 1]
+        if eligible_toc and len(unmatched) / len(eligible_toc) > StructurePolicy.maximum_toc_mismatch_ratio:
+            warnings.append({"code": "toc_body_mismatch", "message": "Material table-of-contents entries did not match reconstructed body headings.", "matched_entries": len(matched), "unmatched_entries": len(unmatched), "ambiguous_entries": len(ambiguous), "duplicate_body_matches": sum(body_titles.count(title) > 1 for title in matched)})
+        page_count = max(1, len({_page(block) for block in blocks if _page(block)}))
+        heuristic_ratio = sum(item.evidence_strength == HierarchyEvidenceStrength.HEURISTICALLY_INFERRED for item in headings) / max(1, len(headings))
+        excluded_ratio = sum(value["disposition"] != BlockDisposition.INCLUDED for value in classifications.values()) / max(1, len(blocks))
+        if heuristic_ratio > StructurePolicy.maximum_heuristic_node_ratio:
+            warnings.append({"code": "high_heuristic_node_ratio", "message": "Too much hierarchy evidence is heuristic for automatic acceptance.", "ratio": heuristic_ratio})
+        if excluded_ratio > StructurePolicy.maximum_navigation_noise_ratio:
+            warnings.append({"code": "high_navigation_noise_ratio", "message": "Navigation or noise occupies a material portion of the document.", "ratio": excluded_ratio})
+        if len(headings) / page_count > StructurePolicy.maximum_nodes_per_page:
+            warnings.append({"code": "high_node_page_ratio", "message": "The hierarchy contains unusually many nodes per page.", "ratio": len(headings) / page_count})
         return nodes, classifications, style_profile, warnings
 
     def _classify_blocks(self, blocks):
@@ -160,11 +182,23 @@ class DeterministicHierarchyReconstructor:
         for block in blocks:
             text = re.sub(r"\s+", " ", (block.normalized_text or "").strip().lower())
             if text and _page(block): occurrences[text].add(_page(block))
+        toc_like = lambda value: bool(re.search(r"(?:\.\s*){3,}.*(?:\d(?:\s*\d)*|[ivxlcdm]+)\s*$", value, re.I))
+        early = [index for index, block in enumerate(blocks) if (_page(block) or 999) <= StructurePolicy.maximum_toc_pages and (re.sub(r"\s+", " ", (block.normalized_text or "").strip().lower()) in {"contents", "table of contents"} or toc_like((block.normalized_text or "").strip()))]
+        toc_start, toc_end = (min(early), max(early)) if len(early) >= 2 else (None, None)
         result = {}
-        for block in blocks:
+        for index, block in enumerate(blocks):
             text = re.sub(r"\s+", " ", (block.normalized_text or "").strip().lower())
             role, disposition, reason, confidence = StructuralRole.BODY, BlockDisposition.INCLUDED, "body_evidence", .85
-            if block.block_type == ExtractedBlockType.PAGE_NUMBER:
+            page = _page(block) or 999
+            month_year = bool(re.fullmatch(r"(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+(?:19|20)\d{2}", text, re.I))
+            roman_marker = bool(re.fullmatch(r"[ivxlcdm]{1,8}", text, re.I))
+            if toc_start is not None and toc_start <= index <= toc_end:
+                role, disposition, reason, confidence = StructuralRole.TABLE_OF_CONTENTS, BlockDisposition.EXCLUDED, "toc_region_ownership", .94
+            elif month_year and page <= StructurePolicy.early_metadata_pages:
+                role, disposition, reason, confidence = StructuralRole.FRONT_MATTER, BlockDisposition.EXCLUDED, "publication_month_year", .95
+            elif roman_marker and page <= StructurePolicy.early_metadata_pages:
+                role, disposition, reason, confidence = StructuralRole.FRONT_MATTER, BlockDisposition.EXCLUDED, "roman_page_marker", .94
+            elif block.block_type == ExtractedBlockType.PAGE_NUMBER:
                 role, disposition, reason, confidence = StructuralRole.PROBABLE_NOISE, BlockDisposition.EXCLUDED, "numeric_margin_pattern", .98
             elif block.block_type in {ExtractedBlockType.HEADER, ExtractedBlockType.FOOTER} or (
                 text
@@ -176,7 +210,7 @@ class DeterministicHierarchyReconstructor:
                 role, disposition, reason, confidence = StructuralRole.PROBABLE_NOISE, BlockDisposition.EXCLUDED, "repeated_margin_text", .92
             elif text in {"contents", "table of contents"} or block.block_type == ExtractedBlockType.TOC_ENTRY:
                 role, disposition, reason, confidence = StructuralRole.TABLE_OF_CONTENTS, BlockDisposition.EXCLUDED, "toc_navigation", .95
-            elif re.search(r"\.{3,}\s*(?:\d+|[ivxlcdm]+)\s*$", text, re.I):
+            elif toc_like(text):
                 role, disposition, reason, confidence = StructuralRole.TABLE_OF_CONTENTS, BlockDisposition.EXCLUDED, "toc_dotted_leader", .9
             elif text.startswith(("copyright", "all rights reserved")):
                 role, disposition, reason, confidence = StructuralRole.COPYRIGHT, BlockDisposition.EXCLUDED, "copyright_notice", .95
@@ -258,7 +292,7 @@ class ReconstructDocumentHierarchyService:
         canonical = [{"parent": n.parent_key, "type": n.node_type, "role": n.role, "title": n.title, "start": n.start, "end": n.end} for n in candidates]
         checksum = hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
         with transaction.atomic():
-            hierarchy = DocumentHierarchy.objects.create(job_id=context.job_id, attempt_id=context.attempt_id, resource_id=context.resource_id, stored_file_id=context.stored_file_id, source_document_profile=extraction.source_document_profile, document_extraction=extraction, pipeline_version=context.pipeline_version, reconstructor_name=RECONSTRUCTOR_NAME, reconstructor_version=RECONSTRUCTOR_VERSION, configuration_version=STRUCTURE_CONFIGURATION_VERSION, node_count=len(candidates), maximum_depth=max(n.depth for n in candidates), front_matter_detected=any(v["role"] in {StructuralRole.PREFACE, StructuralRole.COPYRIGHT, StructuralRole.TABLE_OF_CONTENTS} for v in classifications.values()), back_matter_detected=any(v["role"] in {StructuralRole.REFERENCES, StructuralRole.BIBLIOGRAPHY, StructuralRole.GLOSSARY, StructuralRole.INDEX} for v in classifications.values()), navigation_content_detected=any(v["role"] == StructuralRole.TABLE_OF_CONTENTS for v in classifications.values()), noise_candidates_detected=any(v["role"] == StructuralRole.PROBABLE_NOISE for v in classifications.values()), unresolved_block_count=sum(v["disposition"] in {BlockDisposition.UNRESOLVED, BlockDisposition.REVIEW_REQUIRED} for v in classifications.values()), review_recommended=bool(warnings), confidence=.8 if len(candidates) > 1 else .6, warning_count=len(warnings), result_checksum=checksum)
+            hierarchy = DocumentHierarchy.objects.create(job_id=context.job_id, attempt_id=context.attempt_id, resource_id=context.resource_id, stored_file_id=context.stored_file_id, source_document_profile=extraction.source_document_profile, document_extraction=extraction, pipeline_version=context.pipeline_version, reconstructor_name=RECONSTRUCTOR_NAME, reconstructor_version=RECONSTRUCTOR_VERSION, configuration_version=STRUCTURE_CONFIGURATION_VERSION, node_count=len(candidates), maximum_depth=max(n.depth for n in candidates), front_matter_detected=any(v["role"] in {StructuralRole.FRONT_MATTER, StructuralRole.PREFACE, StructuralRole.COPYRIGHT, StructuralRole.TABLE_OF_CONTENTS} for v in classifications.values()), back_matter_detected=any(v["role"] in {StructuralRole.REFERENCES, StructuralRole.BIBLIOGRAPHY, StructuralRole.GLOSSARY, StructuralRole.INDEX} for v in classifications.values()), navigation_content_detected=any(v["role"] == StructuralRole.TABLE_OF_CONTENTS for v in classifications.values()), noise_candidates_detected=any(v["role"] == StructuralRole.PROBABLE_NOISE for v in classifications.values()), unresolved_block_count=sum(v["disposition"] in {BlockDisposition.UNRESOLVED, BlockDisposition.REVIEW_REQUIRED} for v in classifications.values()), review_recommended=bool(warnings), confidence=.8 if len(candidates) > 1 else .6, warning_count=len(warnings), result_checksum=checksum)
             by_key = {}
             block_by_id = {str(block.id): block for block in blocks}
             for candidate in candidates:
@@ -275,7 +309,8 @@ class ReconstructDocumentHierarchyService:
 
 
 class DeterministicSemanticSegmenter:
-    def classify(self, blocks, node):
+    def classify(self, relationships, node):
+        blocks = [relationship.extracted_block for relationship in relationships]
         types = {block.block_type for block in blocks}
         text = "\n\n".join(block.normalized_text for block in blocks if block.normalized_text).strip()
         lowered = f"{node.title}\n{text[:300]}".lower()
@@ -286,16 +321,20 @@ class DeterministicSemanticSegmenter:
             if re.search(rf"\b{re.escape(label)}\b", lowered): return segment_type
         if node.structural_role in {StructuralRole.REFERENCES, StructuralRole.BIBLIOGRAPHY}: return SemanticSegmentType.REFERENCE
         if types == {ExtractedBlockType.LIST_ITEM}: return SemanticSegmentType.LIST
+        body_relationships = [relationship for relationship in relationships if relationship.relationship_role != NodeBlockRole.HEADING]
+        if not body_relationships:
+            return SemanticSegmentType.PARAGRAPH_GROUP
         return SemanticSegmentType.EXPLANATION if len(text) >= SegmentationPolicy.minimum_meaningful_characters else SemanticSegmentType.PARAGRAPH_GROUP
 
     def groups(self, relationships):
-        blocks = [relationship.extracted_block for relationship in relationships if relationship.included_in_content]
+        relationships = [relationship for relationship in relationships if relationship.included_in_content]
         groups, current, size = [], [], 0
-        for block in blocks:
+        for relationship in relationships:
+            block = relationship.extracted_block
             independent = block.block_type in {ExtractedBlockType.TABLE, ExtractedBlockType.IMAGE}
             if current and (independent or size + len(block.normalized_text) > SegmentationPolicy.maximum_characters or len(current) >= SegmentationPolicy.maximum_blocks_per_segment):
                 groups.append(current); current=[]; size=0
-            current.append(block); size += len(block.normalized_text)
+            current.append(relationship); size += len(block.normalized_text)
             if independent: groups.append(current); current=[]; size=0
         if current: groups.append(current)
         return groups
@@ -325,18 +364,28 @@ class BuildSemanticSegmentsService:
             for group in self.segmenter.groups(relationships):
                 candidates.append((node, group, self.segmenter.classify(group, node)))
         self.validator.validate(candidates)
-        canonical = [{"node": str(node.id), "type": segment_type, "blocks": [block.sequence_number for block in blocks]} for node, blocks, segment_type in candidates]
+        canonical = [{"node": str(node.id), "type": segment_type, "blocks": [relationship.extracted_block.sequence_number for relationship in relationships]} for node, relationships, segment_type in candidates]
         checksum = hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
+        page_count = max(1, hierarchy.document_extraction.page_count or 1)
+        heading_only_count = sum(not any(relationship.relationship_role != NodeBlockRole.HEADING for relationship in relationships) for _, relationships, _ in candidates)
+        warnings = []
+        if heading_only_count / max(1, len(candidates)) > StructurePolicy.maximum_heading_only_segment_ratio:
+            warnings.append({"code": "high_heading_only_segment_ratio", "message": "Too many semantic segments contain headings without substantive body evidence.", "ratio": heading_only_count / max(1, len(candidates))})
+        if len(candidates) / page_count > StructurePolicy.maximum_segments_per_page:
+            warnings.append({"code": "high_segment_page_ratio", "message": "The document contains unusually many semantic segments per page.", "ratio": len(candidates) / page_count})
         with transaction.atomic():
-            segmentation = DocumentSegmentation.objects.create(job_id=context.job_id, attempt_id=context.attempt_id, resource_id=context.resource_id, stored_file_id=context.stored_file_id, document_hierarchy=hierarchy, document_extraction=hierarchy.document_extraction, pipeline_version=context.pipeline_version, segmenter_name=SEGMENTER_NAME, segmenter_version=SEGMENTER_VERSION, configuration_version=STRUCTURE_CONFIGURATION_VERSION, segment_count=len(candidates), body_segment_count=sum(node.structural_role == StructuralRole.BODY for node, _, _ in candidates), excluded_region_count=hierarchy.block_classifications.filter(disposition=BlockDisposition.EXCLUDED).count(), unresolved_content_count=hierarchy.unresolved_block_count, review_recommended=hierarchy.review_recommended, confidence=hierarchy.confidence, warning_count=0, result_checksum=checksum)
+            segmentation = DocumentSegmentation.objects.create(job_id=context.job_id, attempt_id=context.attempt_id, resource_id=context.resource_id, stored_file_id=context.stored_file_id, document_hierarchy=hierarchy, document_extraction=hierarchy.document_extraction, pipeline_version=context.pipeline_version, segmenter_name=SEGMENTER_NAME, segmenter_version=SEGMENTER_VERSION, configuration_version=STRUCTURE_CONFIGURATION_VERSION, segment_count=len(candidates), body_segment_count=sum(node.structural_role == StructuralRole.BODY for node, _, _ in candidates), excluded_region_count=hierarchy.block_classifications.filter(disposition=BlockDisposition.EXCLUDED).count(), unresolved_content_count=hierarchy.unresolved_block_count, review_recommended=hierarchy.review_recommended or bool(warnings), confidence=hierarchy.confidence, warning_count=len(warnings), result_checksum=checksum)
             segments = []
-            for ordinal, (node, blocks, segment_type) in enumerate(candidates):
+            for ordinal, (node, relationships, segment_type) in enumerate(candidates):
+                blocks = [relationship.extracted_block for relationship in relationships]
+                body_relationships = [relationship for relationship in relationships if relationship.relationship_role != NodeBlockRole.HEADING]
+                body_blocks = [relationship.extracted_block for relationship in body_relationships]
                 text = "\n\n".join(block.normalized_text for block in blocks if block.normalized_text).strip()
                 pages = [_page(block) for block in blocks if _page(block)]
-                segment = SemanticSegment(document_segmentation=segmentation, document_hierarchy=hierarchy, hierarchy_node=node, job_id=context.job_id, attempt_id=context.attempt_id, resource_id=context.resource_id, segment_type=segment_type, title=node.title, normalized_text=text, ordinal=ordinal, source_block_start=blocks[0].sequence_number, source_block_end=blocks[-1].sequence_number, source_page_start=min(pages) if pages else None, source_page_end=max(pages) if pages else None, confidence=.9 if segment_type in {SemanticSegmentType.TABLE, SemanticSegmentType.FIGURE} else .78, evidence_strength=SegmentationEvidenceStrength.STRUCTURE_DERIVED if node.evidence_strength != HierarchyEvidenceStrength.FALLBACK_GENERATED else SegmentationEvidenceStrength.FALLBACK_GENERATED, evidence={"classification": "deterministic_rules"}, metadata={"source_method_counts": dict(Counter(block.source_method for block in blocks)), "ocr_present": any(block.evidence_origin == EvidenceOrigin.OCR_INFERRED for block in blocks)})
+                segment = SemanticSegment(document_segmentation=segmentation, document_hierarchy=hierarchy, hierarchy_node=node, job_id=context.job_id, attempt_id=context.attempt_id, resource_id=context.resource_id, segment_type=segment_type, title=node.title, normalized_text=text, ordinal=ordinal, source_block_start=blocks[0].sequence_number, source_block_end=blocks[-1].sequence_number, source_page_start=min(pages) if pages else None, source_page_end=max(pages) if pages else None, confidence=.9 if segment_type in {SemanticSegmentType.TABLE, SemanticSegmentType.FIGURE} else .78, evidence_strength=SegmentationEvidenceStrength.STRUCTURE_DERIVED if node.evidence_strength != HierarchyEvidenceStrength.FALLBACK_GENERATED else SegmentationEvidenceStrength.FALLBACK_GENERATED, evidence={"classification": "deterministic_rules"}, metadata={"source_method_counts": dict(Counter(block.source_method for block in blocks)), "ocr_present": any(block.evidence_origin == EvidenceOrigin.OCR_INFERRED for block in blocks), "heading_block_count": len(relationships) - len(body_relationships), "body_block_count": len(body_relationships), "substantive_body_character_count": sum(len((block.normalized_text or "").strip()) for block in body_blocks), "supporting_body_block_ids": [str(block.id) for block in body_blocks], "heading_only": not body_relationships})
                 segment.full_clean(); segment.save(); segments.append(segment)
-                SemanticSegmentBlock.objects.bulk_create([SemanticSegmentBlock(document_segmentation=segmentation, semantic_segment=segment, extracted_block=block, relationship_role=SegmentBlockRole.TABLE if block.block_type in {ExtractedBlockType.TABLE, ExtractedBlockType.TABLE_ROW, ExtractedBlockType.TABLE_CELL} else SegmentBlockRole.FIGURE if block.block_type == ExtractedBlockType.IMAGE else SegmentBlockRole.LIST if block.block_type == ExtractedBlockType.LIST_ITEM else SegmentBlockRole.BODY, ordinal=index) for index, block in enumerate(blocks)])
-        return segmentation, segments, []
+                SemanticSegmentBlock.objects.bulk_create([SemanticSegmentBlock(document_segmentation=segmentation, semantic_segment=segment, extracted_block=relationship.extracted_block, relationship_role=SegmentBlockRole.TITLE if relationship.relationship_role == NodeBlockRole.HEADING else SegmentBlockRole.TABLE if relationship.relationship_role == NodeBlockRole.TABLE else SegmentBlockRole.FIGURE if relationship.relationship_role == NodeBlockRole.FIGURE else SegmentBlockRole.LIST if relationship.relationship_role == NodeBlockRole.LIST else SegmentBlockRole.BODY, ordinal=index) for index, relationship in enumerate(relationships)])
+        return segmentation, segments, warnings
 
 
 class LegacyHierarchySectionProjectionService:

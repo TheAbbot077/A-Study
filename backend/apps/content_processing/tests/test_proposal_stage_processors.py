@@ -17,10 +17,21 @@ def test_validating_processor_records_approval_before_population():
     def approve(item, **kwargs):
         item.review_state = "approved"; item.population_state = "ready_for_population"
     approval.approve.side_effect = approve
-    result = GenerateAcademicImportProposalProcessor(service, approval).execute(context(ProcessingStage.VALIDATING))
+    acceptance = Mock(); acceptance.evaluate.return_value = SimpleNamespace(eligible=True, policy_version="policy-1", reasons=())
+    result = GenerateAcademicImportProposalProcessor(service, approval, acceptance).execute(context(ProcessingStage.VALIDATING))
     approval.approve.assert_called_once()
     assert result.next_stage == ProcessingStage.POPULATING
     assert result.output_references["academic_import_proposal_id"] == "proposal"
+
+
+def test_validating_processor_stops_for_review_when_automatic_acceptance_is_denied():
+    proposal = SimpleNamespace(id="proposal", review_required=True, review_state="ready_for_review", population_state="not_ready", statistics={"section_count": 800, "concept_count": 522}, result_checksum="checksum")
+    service = Mock(); service.execute.return_value = (proposal, [])
+    approval = Mock()
+    acceptance = Mock(); acceptance.evaluate.return_value = SimpleNamespace(eligible=False, policy_version="policy-1", reasons=("blocking_validation_findings",))
+    result = GenerateAcademicImportProposalProcessor(service, approval, acceptance).execute(context(ProcessingStage.VALIDATING))
+    approval.approve.assert_not_called()
+    assert result.next_stage is None
 
 
 def test_population_processor_returns_population_identity_and_counts():

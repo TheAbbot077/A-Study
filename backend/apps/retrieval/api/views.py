@@ -1,7 +1,7 @@
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
-from apps.retrieval.api.serializers import RetrievalIndexJobSummarySerializer, RetrievalReadinessSerializer
-from apps.retrieval.models import RetrievalChunkCollection, RetrievalIndexJob
+from apps.retrieval.api.serializers import RetrievalIndexJobSummarySerializer, RetrievalReadinessSerializer, RetrievalSynchronizationRunSerializer
+from apps.retrieval.models import RetrievalChunkCollection, RetrievalIndexJob, RetrievalSynchronizationRun
 from apps.users.domain.models import InstitutionMembership
 
 
@@ -23,3 +23,11 @@ class RetrievalIndexJobViewSet(InstitutionScopedReadOnlyViewSet):
     def get_queryset(self):
         return RetrievalIndexJob.objects.filter(population_job__proposal__resource__subject__institution_id__in=self.institution_ids()).order_by("-created_at")
 
+
+class RetrievalSynchronizationRunViewSet(InstitutionScopedReadOnlyViewSet):
+    serializer_class = RetrievalSynchronizationRunSerializer
+
+    def get_queryset(self):
+        return RetrievalSynchronizationRun.objects.filter(
+            resource__subject__institution_id__in=self.institution_ids()
+        ).order_by("-created_at")

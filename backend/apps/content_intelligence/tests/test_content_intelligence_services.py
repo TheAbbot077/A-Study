@@ -525,10 +525,11 @@ class ContentIntelligenceServiceTests(SimpleTestCase):
         self.assertEqual(job.status, ContentImportJob.Status.FAILED)
         self.assertTrue(any(call.args[0].event_name == "content_intelligence.import_failed" for call in publisher.publish.call_args_list))
 
-    def test_deletion_service_removes_academic_content_and_publishes_events(self):
+    def test_deletion_service_retires_academic_and_retrieval_content_and_publishes_events(self):
         learning_content_service = Mock()
         learning_resource_service = Mock()
         storage_service = Mock()
+        retrieval_retirement_service = Mock()
         publisher = Mock()
 
         section = SimpleNamespace(id="section-1")
@@ -552,6 +553,7 @@ class ContentIntelligenceServiceTests(SimpleTestCase):
             learning_content_service=learning_content_service,
             learning_resource_service=learning_resource_service,
             storage_service=storage_service,
+            retrieval_retirement_service=retrieval_retirement_service,
             event_publisher=publisher,
         )
 
@@ -564,10 +566,12 @@ class ContentIntelligenceServiceTests(SimpleTestCase):
 
         self.assertEqual(result.deleted_sections, 1)
         self.assertEqual(result.deleted_concepts, 1)
-        learning_content_service.delete_concept.assert_called_once_with(concept)
-        learning_content_service.delete_section.assert_called_once_with(section)
-        learning_resource_service.delete_resource.assert_called_once_with(resource)
-        storage_service.delete_file.assert_called_once_with(resource.stored_file)
+        retrieval_retirement_service.retire.assert_called_once_with(resource)
+        learning_content_service.archive_concept.assert_called_once_with(concept)
+        learning_content_service.archive_section.assert_called_once_with(section)
+        learning_resource_service.update_resource.assert_called_once_with(resource, stored_file=None)
+        learning_resource_service.archive_resource.assert_called_once_with(resource)
+        storage_service.delete_file_contents.assert_called_once_with(resource.stored_file)
         self.assertEqual(
             [call.args[0].event_name for call in publisher.publish.call_args_list],
             ["content_intelligence.deletion_requested", "content_intelligence.deleted"],
@@ -621,6 +625,7 @@ class ContentIntelligenceServiceTests(SimpleTestCase):
             learning_resource_service=learning_resource_service,
             storage_service=storage_service,
             event_publisher=publisher,
+            retrieval_retirement_service=Mock(),
         )
 
         atomic = Mock()

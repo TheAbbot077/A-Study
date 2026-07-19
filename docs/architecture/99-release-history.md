@@ -121,3 +121,13 @@ Readiness for PI-5:
 
 * PI-4 provides the session, context, grounding, strategy, conversation, Abbot, and companion foundation needed by Assessment & Mastery.
 * Human Docker validation remains required before tagging or release acceptance.
+# PI-6C.6 Semantic Governance Hardening
+
+Document processing now preserves heading/body evidence roles, recognizes bounded TOC and early front-matter regions, applies proposal quantity and evidence guardrails, records explicit automatic-acceptance decisions, stops uncertain imports for review, and rejects stale or blocked population attempts. No schema migration is required because governance evidence uses existing proposal validation, decision, event, and JSON metadata contracts.
+# PI-6D.1 — Academic Proposal Review Workspace
+
+Added the `academic_review` bounded context, durable review lifecycle, item decisions and edits, policy bulk rejection, finding resolutions and administrator overrides, approved population projections, role-gated APIs, reviewer workspace, events, audits, tests, and documentation.
+
+# PI-6D.2 — Reviewed Proposal Approval and Projection
+
+Added durable approval-readiness snapshots, approval decisions, optimistic review versions, deterministic approval versions and four checksums, immutable section/concept projections with provenance, canonical blocking validation, idempotent/concurrent approval protection, projection inspection API, approval events/audit, and the `READY_FOR_POPULATION` boundary without population dispatch.

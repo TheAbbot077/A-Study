@@ -453,3 +453,12 @@ Academic interpretation is governed through durable proposals, evidence, review 
 ### PI-6C.5 — Retrieval Foundation
 
 Approved Academic populations now project into versioned retrieval chunk collections through provider-independent embedding and index ports. Hybrid retrieval, durable citations, grounding packages, and indexing-gated teaching readiness establish the foundation for PI-7 without implementing teaching behavior.
+# PI-6D — Governed Academic Review
+
+PI-6D.1 adds the Academic Proposal Review workspace, immutable review overlays, policy bulk review, finding resolution, approved projections, and asynchronous population handoff.
+
+PI-6D.2 hardens the approval boundary with durable readiness snapshots, versioned approval decisions, deterministic immutable projections, idempotent concurrency controls, and a `READY_FOR_POPULATION` event. Population execution is deferred to PI-6D.3.
+
+PI-6D.3 adds controlled, replay-safe population of immutable approved projections into official Academic Platform sections and concepts. It remains distinct from retrieval synchronization and teaching readiness.
+
+PI-6D.4 implementation is pending manual validation. It reconciles successful PI-6D.3 population mappings with official Academic content and source evidence, builds deterministic candidate retrieval generations, and atomically promotes only fully indexed generations with complete citations. It ends at `SYNCHRONIZED`; teaching readiness and frontend alignment remain deferred.

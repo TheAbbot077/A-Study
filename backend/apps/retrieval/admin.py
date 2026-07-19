@@ -1,5 +1,5 @@
 from django.contrib import admin
-from apps.retrieval.models import GroundingCitation, GroundingPackage, RetrievalChunk, RetrievalChunkCollection, RetrievalDiagnostic, RetrievalIndexJob, RetrievalStatistic
+from apps.retrieval.models import GroundingCitation, GroundingPackage, RetrievalChunk, RetrievalChunkCollection, RetrievalDiagnostic, RetrievalGeneration, RetrievalIndexJob, RetrievalStatistic, RetrievalSynchronizationRun
 
 
 class ReadOnlyAdmin(admin.ModelAdmin):
@@ -25,6 +25,20 @@ class ChunkAdmin(ReadOnlyAdmin):
 class IndexJobAdmin(ReadOnlyAdmin):
     list_display = ("id", "population_job", "status", "chunk_count", "indexed_count", "failure_code", "started_at", "completed_at")
     list_filter = ("status", "retrieval_version", "embedding_version", "failure_code")
+
+
+@admin.register(RetrievalGeneration)
+class RetrievalGenerationAdmin(ReadOnlyAdmin):
+    list_display = ("id", "resource", "subject", "status", "chunk_count", "manifest_fingerprint", "promoted_at", "superseded_at")
+    list_filter = ("status", "created_at", "promoted_at")
+    search_fields = ("id", "resource__id", "manifest_fingerprint", "source_fingerprint")
+
+
+@admin.register(RetrievalSynchronizationRun)
+class RetrievalSynchronizationRunAdmin(ReadOnlyAdmin):
+    list_display = ("id", "academic_population_run", "resource", "subject", "trigger", "status", "retrieval_generation", "planned_chunk_count", "indexed_chunk_count", "citation_coverage", "failure_code", "completed_at")
+    list_filter = ("status", "trigger", "failure_code", "created_at", "completed_at")
+    search_fields = ("id", "academic_population_run__id", "approved_projection_id", "resource__id", "manifest_fingerprint", "idempotency_key")
 
 
 class CitationInline(admin.TabularInline):

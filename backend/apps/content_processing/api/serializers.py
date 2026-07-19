@@ -46,6 +46,7 @@ class ContentProcessingJobSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
     stage = serializers.CharField(source="current_stage", read_only=True)
     stage_label = serializers.SerializerMethodField()
+    message = serializers.SerializerMethodField()
     attempt = serializers.IntegerField(source="active_attempt_number", read_only=True)
     warning_count = serializers.SerializerMethodField()
     can_retry = serializers.SerializerMethodField()
@@ -55,6 +56,8 @@ class ContentProcessingJobSerializer(serializers.ModelSerializer):
     extraction_summary = serializers.SerializerMethodField()
     structure_summary = serializers.SerializerMethodField()
     proposal_summary = serializers.SerializerMethodField()
+    review_required = serializers.SerializerMethodField()
+    ready_for_teaching = serializers.SerializerMethodField()
 
     class Meta:
         model = ContentProcessingJob
@@ -67,6 +70,7 @@ class ContentProcessingJobSerializer(serializers.ModelSerializer):
             "stage",
             "progress",
             "stage_label",
+            "message",
             "attempt",
             "warning_count",
             "can_retry",
@@ -76,6 +80,9 @@ class ContentProcessingJobSerializer(serializers.ModelSerializer):
             "extraction_summary",
             "structure_summary",
             "proposal_summary",
+            "review_required",
+            "ready_for_teaching",
+            "completed_at",
             "created_at",
             "updated_at",
         ]
@@ -89,6 +96,21 @@ class ContentProcessingJobSerializer(serializers.ModelSerializer):
 
     def get_warning_count(self, obj):
         return obj.diagnostics.filter(severity__in=["warning", "error", "fatal"]).count()
+
+    def get_message(self, obj):
+        if obj.status == JobStatus.READY_FOR_REVIEW:
+            return "Review is required before academic content can be published."
+        if obj.status == JobStatus.READY_FOR_TEACHING:
+            return "Academic content is published and ready for teaching."
+        if obj.status == JobStatus.FAILED:
+            return (obj.failure or {}).get("public_message") or "Processing failed."
+        return None
+
+    def get_review_required(self, obj):
+        return obj.status == JobStatus.READY_FOR_REVIEW
+
+    def get_ready_for_teaching(self, obj):
+        return obj.status == JobStatus.READY_FOR_TEACHING
 
     def get_can_retry(self, obj):
         return RetryPolicy().can_retry(obj)
@@ -143,11 +165,14 @@ class ContentProcessingJobSerializer(serializers.ModelSerializer):
             return None
         population = proposal.population_jobs.order_by("-created_at").first()
         return {
+            "id": str(proposal.id),
             "review_state": proposal.review_state,
             "decision": proposal.decision,
             "population_state": proposal.population_state,
             "review_required": proposal.review_required,
             "section_count": proposal.statistics.get("section_count", 0),
             "concept_count": proposal.statistics.get("concept_count", 0),
+            "confidence": proposal.confidence,
+            "blocking_finding_count": proposal.validations.filter(passed=False, severity="blocking").count(),
             "population_status": population.status if population else None,
         }

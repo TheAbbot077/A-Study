@@ -3,6 +3,7 @@ import { expect, type BrowserContext, type Page, type Route } from "@playwright/
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api").replace(/\/$/, "");
 const API_BASE = new URL(API_BASE_URL);
 const API_BASE_PATH = API_BASE.pathname.replace(/\/$/, "");
+const SMOKE_APP_ORIGIN = new URL(process.env.SMOKE_BASE_URL ?? "http://localhost:3000").origin;
 
 export type MockOptions = {
   method?: string;
@@ -10,6 +11,7 @@ export type MockOptions = {
   json?: unknown;
   text?: string;
   contentType?: string;
+  query?: Record<string, string>;
 };
 
 export type MockAuthUser = {
@@ -41,17 +43,25 @@ function canonicalApiPath(pathname: string) {
   return `${API_BASE_PATH}${normalized}`.replace(/\/+/g, "/");
 }
 
-function matchesApiPath(requestUrl: string, pathname: string) {
+function matchesApiPath(requestUrl: string, pathname: string, query?: Record<string, string>) {
   const url = new URL(requestUrl);
   const requestPath = url.pathname.replace(/\/+$/, "/");
   const routePath = canonicalApiPath(pathname).replace(/:([A-Za-z0-9_]+)/g, "[^/]+");
   const expression = new RegExp(`^${routePath}$`);
-  return expression.test(requestPath);
+  return expression.test(requestPath) && Object.entries(query ?? {}).every(([key, value]) => url.searchParams.get(key) === value);
 }
 
-function apiRouteMatcher(pathname: string) {
-  return (requestUrl: URL | string) => matchesApiPath(String(requestUrl), pathname);
+function apiRouteMatcher(pathname: string, query?: Record<string, string>) {
+  return (requestUrl: URL | string) => matchesApiPath(String(requestUrl), pathname, query);
 }
+
+const mockResponseHeaders = {
+  "Access-Control-Allow-Credentials": "true",
+  "Access-Control-Allow-Headers": "Accept, Content-Type, X-CSRFToken",
+  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE",
+  "Access-Control-Allow-Origin": SMOKE_APP_ORIGIN,
+  "Cache-Control": "no-store",
+};
 
 export async function setAuthenticatedSession(context: BrowserContext) {
   await context.addCookies([
@@ -83,9 +93,22 @@ export async function setCsrfSession(context: BrowserContext) {
 
 export async function mockApi(page: Page, pathname: string, options: MockOptions = {}) {
   const method = (options.method ?? "GET").toUpperCase();
-  await page.route(apiRouteMatcher(pathname), async (route: Route) => {
+  await page.route(apiRouteMatcher(pathname, options.query), async (route: Route) => {
+    if (route.request().method().toUpperCase() === "OPTIONS") {
+      await route.fulfill({
+        status: 204,
+        headers: mockResponseHeaders,
+      });
+      return;
+    }
+
     if (route.request().method().toUpperCase() !== method) {
       await route.fallback();
+      return;
+    }
+
+    if (options.status === 204) {
+      await route.fulfill({ status: 204, headers: mockResponseHeaders });
       return;
     }
 
@@ -94,6 +117,7 @@ export async function mockApi(page: Page, pathname: string, options: MockOptions
         status: options.status ?? 200,
         body: options.text,
         contentType: options.contentType ?? "text/plain",
+        headers: mockResponseHeaders,
       });
       return;
     }
@@ -101,6 +125,7 @@ export async function mockApi(page: Page, pathname: string, options: MockOptions
     await route.fulfill({
       status: options.status ?? 200,
       contentType: options.contentType ?? "application/json",
+      headers: mockResponseHeaders,
       body: JSON.stringify(options.json ?? {}),
     });
   });
@@ -135,6 +160,7 @@ export async function mockAuthSession(
       await route.fulfill({
         status: 200,
         contentType: "application/json",
+        headers: mockResponseHeaders,
         body: JSON.stringify(mockUser),
       });
       return;
@@ -143,11 +169,17 @@ export async function mockAuthSession(
     await route.fulfill({
       status: 401,
       contentType: "application/json",
+      headers: mockResponseHeaders,
       body: JSON.stringify({ detail: "Authentication credentials were not provided." }),
     });
   });
 
   await page.route(apiRouteMatcher("auth/logout/"), async (route: Route) => {
+    if (route.request().method().toUpperCase() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers: mockResponseHeaders });
+      return;
+    }
+
     if (route.request().method().toUpperCase() !== "POST") {
       await route.fallback();
       return;
@@ -158,6 +190,7 @@ export async function mockAuthSession(
       status: 200,
       contentType: "application/json",
       headers: {
+        ...mockResponseHeaders,
         "Set-Cookie": "sessionid=; Path=/; Max-Age=0; SameSite=Lax",
       },
       body: JSON.stringify({ detail: "Logged out successfully." }),
@@ -171,6 +204,21 @@ export async function mockAuthSession(
     },
     user: mockUser,
   };
+}
+
+export async function navigateToAuthenticatedRoute(page: Page, target: string) {
+  const authResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method().toUpperCase() === "GET" &&
+      url.pathname === `${API_BASE_PATH}/auth/me/` &&
+      response.ok()
+    );
+  });
+
+  await page.goto(target, { waitUntil: "domcontentloaded" });
+  await authResponse;
+  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible({ timeout: 15_000 });
 }
 
 export async function installUnhandledApiGuard(page: Page, testName = "unknown smoke test") {
@@ -194,6 +242,7 @@ export async function installUnhandledApiGuard(page: Page, testName = "unknown s
       await route.fulfill({
         status: 599,
         contentType: "application/json",
+        headers: mockResponseHeaders,
         body: JSON.stringify({
           detail: `Unhandled smoke-test API request`,
           ...detail,
@@ -293,6 +342,36 @@ export function buildImportJob(overrides: Record<string, unknown> = {}) {
     validation_findings: [],
   };
   return { ...base, ...overrides };
+}
+
+export function buildReviewRequiredImportJob(overrides: Record<string, unknown> = {}) {
+  return buildImportJob({
+    status: "processing",
+    status_detail: "review_required",
+    error_message: "Review is required before academic content can be published.",
+    resource_ready_for_learning: false,
+    processing_status: "ready_for_review",
+    processing_stage: "validating",
+    processing_progress: 98,
+    processing_stage_label: "Ready for academic review",
+    processing_message: "Review is required before academic content can be published.",
+    review_required: true,
+    ready_for_teaching: false,
+    processing_failure: null,
+    can_retry_processing: false,
+    can_cancel_processing: false,
+    proposal: {
+      id: "proposal-1",
+      status: "ready_for_review",
+      decision: "pending",
+      population_state: "not_ready",
+      proposed_section_count: 376,
+      proposed_concept_count: 166,
+      confidence: 0.728,
+      blocking_finding_count: 4,
+    },
+    ...overrides,
+  });
 }
 
 export function buildSection(overrides: Record<string, unknown> = {}) {

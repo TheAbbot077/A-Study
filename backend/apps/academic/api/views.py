@@ -169,7 +169,7 @@ class LearningResourceViewSet(viewsets.ModelViewSet):
         institution_ids = list(
             InstitutionMembership.objects.filter(user=self.request.user, is_active=True).values_list("institution_id", flat=True)
         )
-        queryset = LearningResource.objects.all().order_by("-created_at")
+        queryset = LearningResource.objects.exclude(status=LearningResource.Status.ARCHIVED).order_by("-created_at")
         if not institution_ids:
             return queryset.none()
         queryset = queryset.filter(subject__institution_id__in=institution_ids)

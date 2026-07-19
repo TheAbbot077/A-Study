@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "apps.assessment_review.apps.AssessmentReviewConfig",
     "apps.content_intelligence.apps.ContentIntelligenceConfig",
     "apps.content_processing.apps.ContentProcessingConfig",
+    "apps.academic_review.apps.AcademicReviewConfig",
     "apps.retrieval.apps.RetrievalConfig",
 ]
 

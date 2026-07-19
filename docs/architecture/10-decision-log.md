@@ -130,3 +130,21 @@ Uploaded-file processing needs authoritative orchestration state, immutable atte
 ## PI-6C.5 retrieval decisions
 
 Retrieval is a projection rather than a source of truth; `GroundingPackage` is its exclusive Teaching contract; embedding and index providers are isolated behind ports; hybrid vector/keyword/metadata retrieval is the default; and indexing readiness is gated by completed, approved Academic Population.
+
+## PI-6C.6 semantic governance decisions
+
+* `READY_FOR_REVIEW` is not approval. The legacy field remains `processing` for compatibility, while all lifecycle consumers prioritize the authoritative processing status and treat review as a governed pause.
+* `READY_FOR_REVIEW` is terminal for automatic processing but not for the full publication lifecycle.
+* Automatic acceptance is an explicit versioned policy evaluation with durable evidence.
+* Heading evidence cannot satisfy concept evidence; substantive body blocks are required.
+* TOC regions own their navigation entries and cannot independently create academic content.
+* Blocking proposal findings prevent automatic acceptance and population.
+* Quantity and page-ratio guardrails are independent of confidence.
+* Population requires an approval decision newer than the latest validation snapshot.
+# Decision: Population consumes approved projections
+
+PI-6D.1 establishes that machine proposals are immutable and never directly edited or selectively populated. Human governance produces an immutable approved projection; that projection is the sole population input. Automatic policy acceptance also materializes an all-items projection to preserve this invariant.
+
+# Decision: Approval and population are separate capabilities
+
+PI-6D.2 makes readiness evaluation and projection creation durable, versioned, checksummed, and idempotent. Approval transitions the proposal and projection to `READY_FOR_POPULATION` but performs no population dispatch. PI-6D.3 exclusively owns Academic Platform writes and downstream retrieval/teaching transitions.

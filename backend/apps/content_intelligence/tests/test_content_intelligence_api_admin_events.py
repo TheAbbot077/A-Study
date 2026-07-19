@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.content_intelligence.api.views import ContentImportJobViewSet
+from apps.content_intelligence.api.serializers import ContentImportJobSerializer
 from apps.content_intelligence.models import (
     ContentExtractionResult,
     ContentImportJob,
@@ -22,6 +23,53 @@ from apps.users.domain.models import User
 
 
 class ContentIntelligenceApiAdminEventTests(SimpleTestCase):
+    def test_ready_for_review_projection_is_non_failure_and_non_retryable(self):
+        proposal = SimpleNamespace(
+            id="proposal-1",
+            review_state="ready_for_review",
+            decision="pending",
+            population_state="not_ready",
+            statistics={"section_count": 376, "concept_count": 166},
+            confidence=0.728,
+            validations=Mock(),
+        )
+        proposal.validations.filter.return_value.count.return_value = 4
+        processing_job = SimpleNamespace(
+            id="processing-1",
+            status="ready_for_review",
+            current_stage="validating",
+            progress=98,
+            active_attempt_number=1,
+            cancellation_requested=False,
+            failure={},
+            completed_at="2026-07-15T11:08:47Z",
+            academic_import_proposals=Mock(),
+        )
+        processing_job.academic_import_proposals.order_by.return_value.first.return_value = proposal
+        import_job = SimpleNamespace(processing_job=processing_job, error_message="")
+        serializer = ContentImportJobSerializer()
+
+        self.assertEqual(serializer.get_status_detail(import_job), "review_required")
+        self.assertEqual(serializer.get_processing_message(import_job), "Review is required before academic content can be published.")
+        self.assertTrue(serializer.get_review_required(import_job))
+        self.assertFalse(serializer.get_ready_for_teaching(import_job))
+        self.assertIsNone(serializer.get_processing_failure(import_job))
+        self.assertFalse(serializer.get_can_retry_processing(import_job))
+        self.assertFalse(serializer.get_can_cancel_processing(import_job))
+        self.assertEqual(
+            serializer.get_proposal(import_job),
+            {
+                "id": "proposal-1",
+                "status": "ready_for_review",
+                "decision": "pending",
+                "population_state": "not_ready",
+                "proposed_section_count": 376,
+                "proposed_concept_count": 166,
+                "confidence": 0.728,
+                "blocking_finding_count": 4,
+            },
+        )
+
     def test_api_uses_authentication_permissions(self):
         self.assertEqual(ContentImportJobViewSet.permission_classes, [IsAuthenticated])
 
@@ -92,6 +140,8 @@ class ContentIntelligenceApiAdminEventTests(SimpleTestCase):
             "content_intelligence.deletion_requested",
             "content_intelligence.deleted",
             "content_intelligence.stored_file_deletion_failed",
+            "retrieval.resource_retired",
+            "storage.file_contents_deleted",
         }
         self.assertTrue(expected.issubset(set(default_event_registry._subscribers)))
 

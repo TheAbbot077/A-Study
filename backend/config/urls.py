@@ -28,5 +28,6 @@ urlpatterns = [
     path('api/assessment-review/', include('apps.assessment_review.api.urls')),
     path('api/content-intelligence/', include('apps.content_intelligence.api.urls')),
     path('api/content-processing/', include('apps.content_processing.api.urls')),
+    path('api/academic-review/', include('apps.academic_review.api.urls')),
     path('api/retrieval/', include('apps.retrieval.api.urls')),
 ]

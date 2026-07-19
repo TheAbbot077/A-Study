@@ -57,3 +57,13 @@ class StorageService:
                 payload={"file_id": str(stored_file.id), "stored_filename": stored_file.stored_filename},
             )
         )
+
+    def delete_file_contents(self, stored_file: StoredFile) -> None:
+        """Delete provider bytes while retaining metadata required by processing history."""
+        self.provider.delete(stored_file.stored_filename)
+        self.event_publisher.publish(
+            BusinessEvent.create(
+                "storage.file_contents_deleted",
+                payload={"file_id": str(stored_file.id), "stored_filename": stored_file.stored_filename},
+            )
+        )

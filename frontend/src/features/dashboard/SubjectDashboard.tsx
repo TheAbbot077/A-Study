@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback";
 import { createSubject, listSubjects, type Subject } from "@/services/academic";
@@ -10,7 +9,6 @@ const panelClassName =
   "rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-background)] p-6 shadow-[var(--shadow-card)]";
 
 export function SubjectDashboard() {
-  const router = useRouter();
   const createFormRef = useRef<HTMLFormElement | null>(null);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,7 +52,7 @@ export function SubjectDashboard() {
     try {
       const subject = await createSubject({ name, code, description });
       form.reset();
-      router.push(`/dashboard/subjects/${subject.id}`);
+      window.location.assign(`/dashboard/subjects/${subject.id}`);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Unable to create subject right now.");
     } finally {

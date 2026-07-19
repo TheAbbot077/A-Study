@@ -8,7 +8,14 @@ import {
   createImportJob,
   deleteImportJob,
   getImportJob,
+  authoritativeProcessingStatus,
+  isActivelyProcessing,
+  isPollingTerminal,
+  isProcessingFailed,
+  isReadyForTeaching,
+  isReviewRequired,
   listImportJobsForResource,
+  processingStatusLabel,
   retryImportJob,
   type ContentImportJob,
 } from "@/services/content-intelligence";
@@ -18,7 +25,7 @@ type SubjectDetailProps = {
   subjectId: string;
 };
 
-type ImportStatusTone = "processing" | "completed" | "warning" | "failed";
+type ImportStatusTone = "processing" | "review" | "completed" | "warning" | "failed" | "cancelled";
 
 type ImportPresentation = {
   label: string;
@@ -44,11 +51,28 @@ function presentImportStatus(job: ContentImportJob | null): ImportPresentation {
     return { label: "Awaiting import", tone: "processing" };
   }
 
-  const status = job.status_detail ?? job.status;
-
-  if (status === "created" || status === "pending" || status === "processing") {
-    return { label: "Processing", tone: "processing" };
+  if (isReviewRequired(job)) {
+    return { label: "Ready for review", tone: "review" };
   }
+
+  if (isActivelyProcessing(job)) {
+    return { label: processingStatusLabel(job), tone: "processing" };
+  }
+
+  if (isProcessingFailed(job)) {
+    return { label: "Processing failed", tone: "failed" };
+  }
+
+  if (isReadyForTeaching(job)) {
+    return { label: "Ready for teaching", tone: "completed" };
+  }
+
+  const authoritativeStatus = authoritativeProcessingStatus(job);
+  if (authoritativeStatus === "cancelled" || authoritativeStatus === "deleted") {
+    return { label: processingStatusLabel(job), tone: "cancelled" };
+  }
+
+  const status = job.status_detail ?? job.status;
 
   if (status === "completed_with_warnings" || (status === "completed" && (job.validation_findings?.length ?? 0) > 0)) {
     return { label: "Completed with warnings", tone: "warning" };
@@ -58,6 +82,10 @@ function presentImportStatus(job: ContentImportJob | null): ImportPresentation {
     return { label: "Completed", tone: "completed" };
   }
 
+  if (status === "cancelled") {
+    return { label: "Processing cancelled", tone: "cancelled" };
+  }
+
   return { label: "Failed", tone: "failed" };
 }
 
@@ -65,7 +93,7 @@ function processingStageLabel(job: ContentImportJob | null) {
   if (!job) {
     return null;
   }
-  return job.processing_stage_label || job.processing_stage || null;
+  return processingStatusLabel(job);
 }
 
 function failureReason(job: ContentImportJob | null) {
@@ -85,6 +113,10 @@ function statusBadgeClassName(tone: ImportStatusTone) {
       return "border-[var(--color-success)] text-[var(--color-success)]";
     case "warning":
       return "border-[var(--color-warning)] text-[var(--color-warning)]";
+    case "review":
+      return "border-[var(--color-primary)] text-[var(--color-primary)]";
+    case "cancelled":
+      return "border-[var(--color-border)] text-[var(--color-muted-foreground)]";
     case "failed":
       return "border-[var(--color-danger)] text-[var(--color-danger)]";
     default:
@@ -156,7 +188,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
   async function pollImportJob(importJobId: string, resourceId: string) {
     let nextJob = await getImportJob(importJobId);
 
-    while (nextJob.status === "pending" || nextJob.status === "processing") {
+    while (!isPollingTerminal(nextJob)) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       nextJob = await getImportJob(importJobId);
     }
@@ -208,7 +240,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
       }));
       form.reset();
 
-      if (job.status === "pending" || job.status === "processing") {
+      if (isActivelyProcessing(job)) {
         await pollImportJob(job.id, resource.id);
       } else {
         await loadSubjectData();
@@ -260,8 +292,11 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
       resources.map((resource) => {
         const job = jobsByResource[resource.id] ?? null;
         const presentation = presentImportStatus(job);
-        const readyForLearning = resource.resource_ready_for_learning || job?.resource_ready_for_learning;
-        const canDelete = Boolean(job && job.status !== "pending" && job.status !== "processing");
+        const authoritativeStatus = authoritativeProcessingStatus(job);
+        const reviewRequired = isReviewRequired(job);
+        const readyForLearning = isReadyForTeaching(job) || (!authoritativeStatus && Boolean(resource.resource_ready_for_learning || job?.resource_ready_for_learning));
+        const canDelete = Boolean(job && !isActivelyProcessing(job));
+        const hasFailedImportAction = isProcessingFailed(job);
         const deleteLabel = job?.status === "failed" || job?.status === "cancelled" ? "Delete failed upload" : "Delete document";
         const failure = failureReason(job);
         const activeStageLabel = processingStageLabel(job);
@@ -321,9 +356,26 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
                         style={{ width: `${Math.max(0, Math.min(progress, 100))}%` }}
                       />
                     </div>
-                    <p>{progress}% complete</p>
+                    <p>{reviewRequired ? `${progress}% complete — publication pending review` : `${progress}% complete`}</p>
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+
+            {reviewRequired ? (
+              <div className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-primary)]/50 p-4 text-sm">
+                <h4 className="font-semibold text-[var(--color-foreground)]">Ready for review</h4>
+                <p className="mt-2 text-[var(--color-muted-foreground)]">
+                  Processing completed successfully, but this document needs academic review before it can be published.
+                </p>
+                {job?.proposal ? (
+                  <dl className="mt-3 grid gap-2 text-[var(--color-muted-foreground)] sm:grid-cols-3">
+                    <div><dt>Proposed sections</dt><dd className="font-medium text-[var(--color-foreground)]">{job.proposal.proposed_section_count}</dd></div>
+                    <div><dt>Proposed concepts</dt><dd className="font-medium text-[var(--color-foreground)]">{job.proposal.proposed_concept_count}</dd></div>
+                    <div><dt>Confidence</dt><dd className="font-medium text-[var(--color-foreground)]">{(job.proposal.confidence * 100).toFixed(1)}%</dd></div>
+                  </dl>
+                ) : null}
+                <p className="mt-3 text-[var(--color-muted-foreground)]">Review tools coming next.</p>
               </div>
             ) : null}
 
@@ -341,7 +393,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
               </div>
             ) : null}
 
-            {job?.status === "failed" ? (
+            {hasFailedImportAction ? (
               <div className="mt-4 space-y-3">
                 <p className="text-sm text-[var(--color-danger)]">
                   {job.error_message || "The import failed before content could be processed."}
@@ -381,7 +433,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
               </div>
             ) : null}
 
-            {job && (job.status === "pending" || job.status === "processing") ? (
+            {job && isActivelyProcessing(job) ? (
               <div className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-border)] p-4 text-sm text-[var(--color-muted-foreground)]">
                 Import is still running. The resource outline will unlock as soon as the backend marks this
                 document ready for learning.
@@ -398,10 +450,10 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
                 </Link>
               ) : (
                 <span className="inline-flex min-h-10 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-sm font-medium text-[var(--color-muted-foreground)]">
-                  Outline available after processing completes
+                  {reviewRequired ? "Academic review required before study can begin" : "Outline available after processing completes"}
                 </span>
               )}
-              {canDelete && job ? (
+              {canDelete && job && !hasFailedImportAction ? (
                 <button
                   className="inline-flex min-h-10 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-danger)]/60 px-3 text-sm font-medium text-[var(--color-danger)] transition hover:bg-[var(--color-danger)]/10"
                   onClick={() =>
@@ -427,24 +479,30 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
   const importSummary = useMemo(() => {
     let processing = 0;
     let completed = 0;
+    let review = 0;
     let warnings = 0;
     let failed = 0;
+    let cancelled = 0;
 
     for (const resource of resources) {
       const job = jobsByResource[resource.id] ?? null;
       const presentation = presentImportStatus(job);
       if (presentation.tone === "processing") {
         processing += 1;
+      } else if (presentation.tone === "review") {
+        review += 1;
       } else if (presentation.tone === "completed") {
         completed += 1;
       } else if (presentation.tone === "warning") {
         warnings += 1;
       } else if (presentation.tone === "failed") {
         failed += 1;
+      } else if (presentation.tone === "cancelled") {
+        cancelled += 1;
       }
     }
 
-    return { processing, completed, warnings, failed };
+    return { processing, review, completed, warnings, failed, cancelled };
   }, [jobsByResource, resources]);
 
   if (loading) {
@@ -542,10 +600,14 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
           </p>
         </div>
 
-        <dl className="mb-6 grid gap-3 text-sm text-[var(--color-muted-foreground)] sm:grid-cols-2 xl:grid-cols-4">
+        <dl className="mb-6 grid gap-3 text-sm text-[var(--color-muted-foreground)] sm:grid-cols-2 xl:grid-cols-6">
           <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
             <dt className="font-medium text-[var(--color-foreground)]">Processing</dt>
             <dd className="mt-1">{importSummary.processing}</dd>
+          </div>
+          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
+            <dt className="font-medium text-[var(--color-foreground)]">Ready for review</dt>
+            <dd className="mt-1">{importSummary.review}</dd>
           </div>
           <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
             <dt className="font-medium text-[var(--color-foreground)]">Completed</dt>
@@ -558,6 +620,10 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
           <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
             <dt className="font-medium text-[var(--color-foreground)]">Failed</dt>
             <dd className="mt-1">{importSummary.failed}</dd>
+          </div>
+          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
+            <dt className="font-medium text-[var(--color-foreground)]">Cancelled</dt>
+            <dd className="mt-1">{importSummary.cancelled}</dd>
           </div>
         </dl>
 
@@ -572,9 +638,11 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
       </section>
 
       {pendingDelete ? (
-        <section className={panelClassName}>
+        <section aria-labelledby="delete-upload-title" aria-modal="true" className={panelClassName} role="dialog">
           <div className="space-y-3">
-            <h2 className="text-lg font-semibold text-[var(--color-foreground)]">{pendingDelete.label}</h2>
+            <h2 className="text-lg font-semibold text-[var(--color-foreground)]" id="delete-upload-title">
+              {pendingDelete.label}
+            </h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
               Delete <span className="font-medium text-[var(--color-foreground)]">{pendingDelete.resourceTitle}</span>.
               This removes the uploaded file, processing history, and any generated outline from this subject.

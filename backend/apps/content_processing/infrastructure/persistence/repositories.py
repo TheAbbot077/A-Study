@@ -19,7 +19,11 @@ class DjangoContentProcessingJobRepository:
         return ContentProcessingJob.objects.select_related("resource", "stored_file", "legacy_import_job").get(id=job_id)
 
     def get_for_update(self, job_id: str) -> ContentProcessingJob:
-        return ContentProcessingJob.objects.select_for_update().select_related("resource", "stored_file", "legacy_import_job").get(id=job_id)
+        return (
+            ContentProcessingJob.objects.select_for_update(of=("self",))
+            .select_related("resource", "stored_file", "legacy_import_job")
+            .get(id=job_id)
+        )
 
     def find_active_by_identity(self, resource_id: str, stored_file_id: str | None, pipeline_version: str) -> ContentProcessingJob | None:
         queryset = ContentProcessingJob.objects.filter(resource_id=resource_id, pipeline_version=pipeline_version).exclude(status="deleted")

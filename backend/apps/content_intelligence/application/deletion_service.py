@@ -30,12 +30,14 @@ class ContentImportDeletionService:
         learning_resource_service: Optional[LearningResourceService] = None,
         learning_content_service: Optional[LearningContentService] = None,
         storage_service: Optional[StorageService] = None,
+        retrieval_retirement_service=None,
         event_publisher: Optional[EventPublisher] = None,
     ) -> None:
         self.job_repository = job_repository or DjangoContentImportJobRepository()
         self.learning_resource_service = learning_resource_service or LearningResourceService()
         self.learning_content_service = learning_content_service or LearningContentService()
         self.storage_service = storage_service
+        self.retrieval_retirement_service = retrieval_retirement_service
         self.event_publisher = event_publisher or EventPublisher()
 
     def _cancel_processing_service(self):
@@ -48,13 +50,21 @@ class ContentImportDeletionService:
 
         return DeleteContentProcessingJobService(event_publisher=self.event_publisher)
 
+    def _retrieval_retirement_service(self):
+        if self.retrieval_retirement_service is None:
+            from apps.retrieval.application import RetireRetrievalResourceService
+
+            self.retrieval_retirement_service = RetireRetrievalResourceService(event_publisher=self.event_publisher)
+        return self.retrieval_retirement_service
+
     def delete_import(self, job) -> ContentImportDeletionResult:
         self._ensure_deletable(job)
+        content_import_job_id = str(job.id)
         self.event_publisher.publish(
             BusinessEvent.create(
                 "content_intelligence.deletion_requested",
                 payload={
-                    "content_import_job_id": str(job.id),
+                    "content_import_job_id": content_import_job_id,
                     "learning_resource_id": str(job.learning_resource_id) if job.learning_resource_id is not None else None,
                     "stored_file_id": str(job.stored_file_id) if job.stored_file_id is not None else None,
                 },
@@ -67,30 +77,32 @@ class ContentImportDeletionService:
         deleted_sections = 0
         processing_job = getattr(job, "processing_job", None)
 
-        if processing_job is not None:
-            try:
-                from apps.content_processing.domain.exceptions import ProcessingLifecycleError
-                from apps.content_processing.models import JobStatus
-
-                if processing_job.status == JobStatus.ACTIVE:
-                    processing_job = self._cancel_processing_service().cancel(processing_job)
-                self._delete_processing_service().mark_deleted(processing_job)
-            except ProcessingLifecycleError as exc:
-                raise ContentImportDeletionConflictError(
-                    "This import could not be deleted safely because processing is still advancing.",
-                    details={"processing_job_id": str(processing_job.id), "reason": str(exc)},
-                ) from exc
-
         with transaction.atomic():
+            if processing_job is not None:
+                try:
+                    from apps.content_processing.domain.exceptions import ProcessingLifecycleError
+                    from apps.content_processing.models import JobStatus
+
+                    if processing_job.status == JobStatus.ACTIVE:
+                        processing_job = self._cancel_processing_service().cancel(processing_job)
+                    self._delete_processing_service().mark_deleted(processing_job)
+                except ProcessingLifecycleError as exc:
+                    raise ContentImportDeletionConflictError(
+                        "This import could not be deleted safely because processing is still advancing.",
+                        details={"processing_job_id": str(processing_job.id), "reason": str(exc)},
+                    ) from exc
+
+            self._retrieval_retirement_service().retire(learning_resource)
             sections = list(self.learning_content_service.list_sections(learning_resource))
             for section in sections:
                 for concept in list(self.learning_content_service.list_concepts(section)):
-                    self.learning_content_service.delete_concept(concept)
+                    self.learning_content_service.archive_concept(concept)
                     deleted_concepts += 1
-                self.learning_content_service.delete_section(section)
+                self.learning_content_service.archive_section(section)
                 deleted_sections += 1
 
-            self.learning_resource_service.delete_resource(learning_resource)
+            self.learning_resource_service.update_resource(learning_resource, stored_file=None)
+            self.learning_resource_service.archive_resource(learning_resource)
             job.delete()
 
         storage_deleted = False
@@ -102,14 +114,14 @@ class ContentImportDeletionService:
                     details={"stored_file_id": str(stored_file.id)},
                 )
             try:
-                self.storage_service.delete_file(stored_file)
+                self.storage_service.delete_file_contents(stored_file)
                 storage_deleted = True
             except Exception as exc:
                 self.event_publisher.publish(
                     BusinessEvent.create(
                         "content_intelligence.stored_file_deletion_failed",
                         payload={
-                            "content_import_job_id": str(job.id),
+                            "content_import_job_id": content_import_job_id,
                             "stored_file_id": str(stored_file.id),
                             "error_message": str(exc),
                         },
@@ -119,14 +131,14 @@ class ContentImportDeletionService:
                     "Database records were removed, but the stored file could not be deleted.",
                     code="stored_file_deletion_failed",
                     details={
-                        "content_import_job_id": str(job.id),
+                    "content_import_job_id": content_import_job_id,
                         "stored_file_id": str(stored_file.id),
                         "error_message": str(exc),
                     },
                 ) from exc
 
         result = ContentImportDeletionResult(
-            content_import_job_id=str(job.id),
+            content_import_job_id=content_import_job_id,
             learning_resource_id=str(getattr(learning_resource, "id", None)) if learning_resource is not None else None,
             stored_file_id=str(getattr(stored_file, "id", None)) if stored_file is not None else None,
             deleted_sections=deleted_sections,

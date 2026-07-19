@@ -38,4 +38,9 @@ PI-6C.3 uses deterministic document-wide and lexical policies before any optiona
 
 PI-6C.4 makes proposal generation an evidence-producing interpretation step. Even high-confidence deterministic or future provider output must pass proposal validation and a recorded review decision before population. Publication remains a separate deterministic service.
 
+PI-6C.6 makes automatic acceptance an explicit, versioned governance decision. Heading evidence never substitutes for substantive body evidence, blocking findings stop population, and review-required proposals cannot advance to retrieval or teaching readiness.
+
 PI-6C.5 adds provider-independent embedding and retrieval ports. Retrieval implementations, including the optional PostgreSQL/pgvector adapter, remain infrastructure concerns. AI and Teaching consumers receive only a durable `GroundingPackage` with ranked evidence and complete citations; they never receive vectors, provider clients, or index APIs.
+# Human Governance Boundary
+
+Machine proposal generation does not grant publication authority. PI-6D.1 records human review as an overlay and produces an approved projection. Downstream academic population, retrieval, and teaching consume accepted content only.
