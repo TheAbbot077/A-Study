@@ -1,0 +1,145 @@
+import django.db.models.deletion
+import uuid
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ("academic", "0006_content_review_fields"),
+        ("self_study", "0007_teaching_preparation"),
+        ("users", "0004_alter_institution_institution_type_and_more"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="SelfStudyTeachingSession",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ("state", models.CharField(choices=[("PENDING","Pending"),("ACTIVE","Active"),("PAUSED","Paused"),("AWAITING_LEARNER","Awaiting learner"),("AWAITING_EVIDENCE","Awaiting evidence"),("NODE_COMPLETE","Node complete"),("BLOCKED","Blocked"),("STALE","Stale"),("INVALIDATED","Invalidated"),("COMPLETED","Completed"),("CANCELLED","Cancelled")], default="PENDING", max_length=24)),
+                ("session_fingerprint", models.CharField(max_length=128)),
+                ("privacy_policy_version", models.CharField(max_length=64)),
+                ("disclosure_policy_version", models.CharField(max_length=64)),
+                ("current_turn_sequence", models.PositiveIntegerField(default=0)),
+                ("cancellation_reason", models.CharField(blank=True, max_length=96)),
+                ("idempotency_key", models.CharField(blank=True, max_length=128)),
+                ("version", models.PositiveIntegerField(default=1)),
+                ("started_at", models.DateTimeField(blank=True, null=True)),
+                ("paused_at", models.DateTimeField(blank=True, null=True)),
+                ("completed_at", models.DateTimeField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("bridge_plan", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_sessions", to="self_study.bridgeplan")),
+                ("intent", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_sessions", to="self_study.selfstudyintent")),
+                ("learner", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="self_study_teaching_sessions", to="users.user")),
+                ("preparation_manifest", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_sessions", to="self_study.teachingpreparationmanifest")),
+                ("tenant", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="self_study_teaching_sessions", to="users.institution")),
+            ],
+            options={"db_table":"self_study_teaching_session","indexes":[models.Index(fields=["learner","state"], name="ssi_tsess_learner_idx"),models.Index(fields=["intent","state"], name="ssi_tsess_intent_idx")],"constraints":[models.UniqueConstraint(fields=("tenant","session_fingerprint"), name="ssi_tsess_fp_unique"),models.UniqueConstraint(fields=("intent","idempotency_key"), name="ssi_tsess_idem_unique")]},
+        ),
+        migrations.CreateModel(
+            name="TeachingSessionNode",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ("plan_ordinal", models.PositiveIntegerField()),
+                ("topological_layer", models.PositiveIntegerField()),
+                ("bridge_disposition", models.CharField(max_length=32)),
+                ("permitted_roles", models.JSONField(default=list)),
+                ("state", models.CharField(choices=[("PENDING","Pending"),("ACTIVE","Active"),("PAUSED","Paused"),("AWAITING_EVIDENCE","Awaiting evidence"),("NODE_COMPLETE","Node complete"),("BLOCKED","Blocked"),("STALE","Stale"),("SKIPPED_BY_POLICY","Skipped by policy"),("CANCELLED","Cancelled")], default="PENDING", max_length=24)),
+                ("context_fingerprint", models.CharField(max_length=128)),
+                ("transition_metadata", models.JSONField(default=dict)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("bridge_node", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_session_nodes", to="self_study.bridgeplannode")),
+                ("graph_node", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_session_nodes", to="self_study.curriculumnode")),
+                ("graph_version", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_session_nodes", to="self_study.curriculumgraphversion")),
+                ("session", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="nodes", to="self_study.selfstudyteachingsession")),
+                ("teaching_pack", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_session_nodes", to="self_study.nodeteachingpack")),
+            ],
+            options={"db_table":"self_study_teaching_session_node","indexes":[models.Index(fields=["session","topological_layer","plan_ordinal"], name="ssi_tnode_order_idx")],"constraints":[models.UniqueConstraint(fields=("session","bridge_node"), name="ssi_tnode_unique"),models.UniqueConstraint(fields=("session","context_fingerprint"), name="ssi_tnode_ctx_unique")]},
+        ),
+        migrations.AddField(
+            model_name="selfstudyteachingsession",
+            name="current_session_node",
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="current_for_sessions", to="self_study.teachingsessionnode"),
+        ),
+        migrations.CreateModel(
+            name="TeachingOrchestrationRun",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ("orchestration_version", models.CharField(max_length=64)), ("model_version", models.CharField(max_length=64)), ("prompt_policy_version", models.CharField(max_length=64)),
+                ("run_fingerprint", models.CharField(max_length=128)),
+                ("status", models.CharField(choices=[("PENDING","Pending"),("PREPARING_CONTEXT","Preparing context"),("GENERATING_TURN","Generating turn"),("AWAITING_LEARNER","Awaiting learner"),("CAPTURING_EVIDENCE","Capturing evidence"),("TRANSITIONING","Transitioning"),("COMPLETED","Completed"),("PAUSED","Paused"),("BLOCKED","Blocked"),("STALE","Stale"),("INVALIDATED","Invalidated"),("FAILED","Failed")], default="PENDING", max_length=24)),
+                ("stage", models.CharField(default="CREATED", max_length=32)), ("claim_token", models.UUIDField(blank=True, null=True)), ("claimed_at", models.DateTimeField(blank=True, null=True)), ("claimed_by", models.CharField(blank=True, max_length=128)),
+                ("failure_code", models.CharField(blank=True, max_length=96)), ("failure_detail", models.CharField(blank=True, max_length=500)),
+                ("created_at", models.DateTimeField(auto_now_add=True)), ("updated_at", models.DateTimeField(auto_now=True)), ("completed_at", models.DateTimeField(blank=True, null=True)),
+                ("bridge_plan", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_orchestration_runs", to="self_study.bridgeplan")),
+                ("graph_version", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_orchestration_runs", to="self_study.curriculumgraphversion")),
+                ("intent", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_orchestration_runs", to="self_study.selfstudyintent")),
+                ("learner", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_orchestration_runs", to="users.user")),
+                ("predecessor", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="successors", to="self_study.teachingorchestrationrun")),
+                ("preparation_manifest", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_orchestration_runs", to="self_study.teachingpreparationmanifest")),
+                ("retrieval_manifest", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_orchestration_runs", to="self_study.teachingretrievalmanifest")),
+                ("session", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="orchestration_runs", to="self_study.selfstudyteachingsession")),
+                ("tenant", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="teaching_orchestration_runs", to="users.institution")),
+            ],
+            options={"db_table":"self_study_teaching_orchestration_run","indexes":[models.Index(fields=["session","status"], name="ssi_torun_status_idx")],"constraints":[models.UniqueConstraint(fields=("tenant","run_fingerprint"), name="ssi_torun_fp_unique")]},
+        ),
+        migrations.CreateModel(
+            name="TeachingContextSnapshot",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ("bridge_plan_fingerprint", models.CharField(max_length=128)), ("preparation_fingerprint", models.CharField(max_length=128)), ("retrieval_fingerprint", models.CharField(max_length=128)),
+                ("permitted_roles", models.JSONField(default=list)), ("current_learner_input", models.TextField(blank=True)), ("prior_turn_references", models.JSONField(default=list)), ("retrieval_filters", models.JSONField(default=dict)),
+                ("safety_policy_version", models.CharField(max_length=64)), ("disclosure_policy_version", models.CharField(max_length=64)), ("model_version", models.CharField(max_length=64)), ("prompt_policy_version", models.CharField(max_length=64)),
+                ("context_snapshot", models.JSONField()), ("context_fingerprint", models.CharField(max_length=128, unique=True)), ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("graph_version", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to="self_study.curriculumgraphversion")),
+                ("session", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="context_snapshots", to="self_study.selfstudyteachingsession")),
+                ("session_node", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="context_snapshots", to="self_study.teachingsessionnode")),
+            ],
+            options={"db_table":"self_study_teaching_context_snapshot","indexes":[models.Index(fields=["session","created_at"], name="ssi_tctx_session_idx")]},
+        ),
+        migrations.CreateModel(
+            name="TeachingTurn",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ("sequence_number", models.PositiveIntegerField()), ("actor", models.CharField(choices=[("LEARNER","Learner"),("ABBOT","Abbot"),("SYSTEM","System")], max_length=16)), ("action", models.CharField(choices=[("INTRODUCE","Introduce"),("EXPLAIN","Explain"),("ILLUSTRATE","Illustrate"),("ASK","Ask"),("PRACTICE","Practice"),("CHECK_UNDERSTANDING","Check understanding"),("PROVIDE_FEEDBACK","Provide feedback"),("REFLECT","Reflect"),("RECAP","Recap"),("PAUSE","Pause"),("REQUEST_REVIEW","Request review"),("REQUEST_EVALUATION","Request evaluation")], max_length=32)),
+                ("learner_input_reference", models.CharField(blank=True, max_length=128)), ("generated_response_reference", models.CharField(blank=True, max_length=128)), ("response_text", models.TextField(blank=True)),
+                ("provider_version", models.CharField(max_length=64)), ("model_version", models.CharField(max_length=64)), ("prompt_policy_version", models.CharField(max_length=64)), ("generation_fingerprint", models.CharField(max_length=128)), ("idempotency_key", models.CharField(blank=True, max_length=128)),
+                ("safety_status", models.CharField(choices=[("SAFE","Safe"),("BLOCKED","Blocked"),("NEEDS_REVIEW","Needs review")], default="SAFE", max_length=16)), ("failure_code", models.CharField(blank=True, max_length=96)), ("interruption_code", models.CharField(blank=True, max_length=96)), ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("context_snapshot", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="turns", to="self_study.teachingcontextsnapshot")),
+                ("session", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="turns", to="self_study.selfstudyteachingsession")),
+                ("session_node", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="turns", to="self_study.teachingsessionnode")),
+            ],
+            options={"db_table":"self_study_teaching_turn","indexes":[models.Index(fields=["session","created_at"], name="ssi_tturn_session_idx")],"constraints":[models.UniqueConstraint(fields=("session","sequence_number"), name="ssi_tturn_seq_unique"),models.UniqueConstraint(fields=("session","generation_fingerprint"), name="ssi_tturn_fp_unique"),models.UniqueConstraint(fields=("session","idempotency_key"), name="ssi_tturn_idem_unique")]},
+        ),
+        migrations.CreateModel(
+            name="TeachingTurnCitation",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)), ("extraction_provenance", models.JSONField(default=dict)), ("mapping_classification", models.CharField(max_length=32)), ("teaching_role", models.CharField(max_length=32)), ("retrieval_record_identity", models.CharField(max_length=128)), ("citation", models.JSONField(default=dict)), ("citation_fingerprint", models.CharField(max_length=128)),
+                ("evidence_unit", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="turn_citations", to="self_study.contentevidenceunit")),
+                ("resource", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="self_study_turn_citations", to="academic.learningresource")),
+                ("teaching_pack_resource", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="turn_citations", to="self_study.teachingpackresource")),
+                ("turn", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="citations", to="self_study.teachingturn")),
+            ],
+            options={"db_table":"self_study_teaching_turn_citation","constraints":[models.UniqueConstraint(fields=("turn","citation_fingerprint"), name="ssi_tcite_fp_unique")]},
+        ),
+        migrations.CreateModel(
+            name="TeachingTransition",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)), ("source_state", models.CharField(max_length=24)), ("target_state", models.CharField(max_length=24)), ("transition_type", models.CharField(choices=[("START","Start"),("PAUSE","Pause"),("RESUME","Resume"),("REVISIT","Revisit"),("ADVANCE","Advance"),("REQUEST_EVIDENCE","Request evidence"),("COMPLETE_NODE","Complete node"),("BLOCK","Block"),("STALE","Stale"),("INVALIDATE","Invalidate"),("CANCEL","Cancel")], max_length=24)), ("authority", models.CharField(max_length=64)), ("reason_code", models.CharField(max_length=96)), ("expected_version", models.PositiveIntegerField()), ("transition_fingerprint", models.CharField(max_length=128)), ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("actor", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="self_study_teaching_transitions", to="users.user")),
+                ("session", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="transitions", to="self_study.selfstudyteachingsession")),
+                ("source_node", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="source_transitions", to="self_study.teachingsessionnode")),
+                ("target_node", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="target_transitions", to="self_study.teachingsessionnode")),
+            ],
+            options={"db_table":"self_study_teaching_transition","indexes":[models.Index(fields=["session","created_at"], name="ssi_ttrans_session_idx")],"constraints":[models.UniqueConstraint(fields=("session","transition_fingerprint"), name="ssi_ttrans_fp_unique")]},
+        ),
+        migrations.CreateModel(
+            name="TeachingSessionFinding",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)), ("code", models.CharField(max_length=96)), ("severity", models.CharField(choices=[("INFO","Info"),("WARNING","Warning"),("BLOCKER","Blocker")], max_length=16)), ("blocking", models.BooleanField(default=False)), ("scope", models.CharField(max_length=32)), ("affected_identities", models.JSONField(default=list)), ("details", models.JSONField(default=dict)), ("policy_version", models.CharField(max_length=64)), ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("session", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="findings", to="self_study.selfstudyteachingsession")),
+                ("session_node", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="findings", to="self_study.teachingsessionnode")),
+            ],
+            options={"db_table":"self_study_teaching_session_finding","indexes":[models.Index(fields=["session","blocking","severity"], name="ssi_tsfind_idx")]},
+        ),
+    ]
