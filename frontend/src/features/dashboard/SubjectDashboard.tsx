@@ -15,22 +15,23 @@ export function SubjectDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function loadSubjects() {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const nextSubjects = await listSubjects();
-      setSubjects(nextSubjects);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load subjects right now.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    void loadSubjects();
+    let active = true;
+    async function synchronizeSubjects() {
+      try {
+        const nextSubjects = await listSubjects();
+        if (!active) return;
+        setSubjects(nextSubjects);
+        setError(null);
+      } catch (loadError) {
+        if (!active) return;
+        setError(loadError instanceof Error ? loadError.message : "Unable to load subjects right now.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+    void synchronizeSubjects();
+    return () => { active = false; };
   }, []);
 
   async function handleCreateSubject(event: FormEvent<HTMLFormElement>) {
@@ -95,6 +96,13 @@ export function SubjectDashboard() {
           </dl>
 
           {error ? <ErrorState title="Subject dashboard issue" message={error} /> : null}
+
+          <Link
+            className="inline-flex min-h-11 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-primary)] px-4 py-3 text-sm font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-accent)]/25"
+            href="/dashboard/self-study"
+          >
+            Open self-study workspaces
+          </Link>
         </section>
 
         <aside className={panelClassName}>

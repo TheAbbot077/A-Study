@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback";
 import {
@@ -58,7 +58,6 @@ function initialResponseValue(question: AssessmentQuestion | null) {
 }
 
 export function AssessmentExperience({ conceptId }: AssessmentExperienceProps) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [concept, setConcept] = useState<ContentConcept | null>(null);
   const [section, setSection] = useState<ContentSection | null>(null);
@@ -71,7 +70,7 @@ export function AssessmentExperience({ conceptId }: AssessmentExperienceProps) {
   const [submitting, setSubmitting] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [startingRemediation, setStartingRemediation] = useState(false);
-  const [responseValue, setResponseValue] = useState("");
+  const [responseValues, setResponseValues] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let isMounted = true;
@@ -118,10 +117,14 @@ export function AssessmentExperience({ conceptId }: AssessmentExperienceProps) {
   }, [conceptId]);
 
   const activeQuestion = useMemo(() => currentQuestion(snapshot), [snapshot]);
+  const responseValue = activeQuestion
+    ? responseValues[activeQuestion.id] ?? initialResponseValue(activeQuestion)
+    : "";
 
-  useEffect(() => {
-    setResponseValue(initialResponseValue(activeQuestion));
-  }, [activeQuestion]);
+  function setResponseValue(value: string) {
+    if (!activeQuestion) return;
+    setResponseValues((current) => ({ ...current, [activeQuestion.id]: value }));
+  }
 
   async function handleStart() {
     setStarting(true);
@@ -204,7 +207,7 @@ export function AssessmentExperience({ conceptId }: AssessmentExperienceProps) {
   }
 
   if (!concept || !section || !resource) {
-    return <ErrorState title="Mastery check unavailable" message="We couldn't find this concept." />;
+    return <ErrorState title="Mastery check unavailable" message="We could not find this concept." />;
   }
 
   const sessionId = searchParams.get("session");
@@ -283,7 +286,7 @@ export function AssessmentExperience({ conceptId }: AssessmentExperienceProps) {
             <div className="rounded-[var(--radius-md)] border border-[var(--color-success)]/60 p-4">
               <h3 className="text-base font-semibold text-[var(--color-foreground)]">Mastery success</h3>
               <p className="mt-2 text-sm text-[var(--color-muted-foreground)]">
-                You passed this mastery check. Continue to the next available concept when you're ready.
+                You passed this mastery check. Continue to the next available concept when you are ready.
               </p>
               <div className="mt-4 flex flex-wrap gap-3">
                 {snapshot?.next_available_concept_id ? (

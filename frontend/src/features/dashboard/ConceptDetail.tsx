@@ -253,7 +253,7 @@ export function ConceptDetail({ conceptId }: ConceptDetailProps) {
   }
 
   if (!concept || !section || !resource) {
-    return <ErrorState title="Concept unavailable" message="We couldn't find this concept." />;
+    return <ErrorState title="Concept unavailable" message="We could not find this concept." />;
   }
 
   return (
@@ -308,7 +308,7 @@ export function ConceptDetail({ conceptId }: ConceptDetailProps) {
           <div className="space-y-2">
             <h2 className="text-lg font-semibold text-[var(--color-foreground)]">Next step</h2>
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              Move into teaching here, then continue to a mastery check when you're ready.
+              Move into teaching here, then continue to a mastery check when you are ready.
             </p>
           </div>
 

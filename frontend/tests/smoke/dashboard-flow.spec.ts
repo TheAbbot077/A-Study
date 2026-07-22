@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import {
   buildImportJob,
   buildLearningResource,
+  buildProcessingJob,
   buildReviewRequiredImportJob,
   buildSubject,
   buildValidationFinding,
@@ -90,7 +91,7 @@ test.describe("Dashboard and subject smoke flow", () => {
     await expectNoNextNotFound(page);
   });
 
-  test("subject detail upload form posts to the canonical backend endpoints", async ({ page }) => {
+  test("new upload hands off from legacy lineage to canonical processing polling", async ({ page }) => {
     const uploadedResource = buildLearningResource({
       id: "resource-1",
       subject: "subject-1",
@@ -99,15 +100,22 @@ test.describe("Dashboard and subject smoke flow", () => {
       description: "",
       status: "draft",
       source_label: "sample.pdf",
-      resource_ready_for_learning: true,
+      resource_ready_for_learning: false,
     });
-    const completedJob = buildImportJob({
+    const legacyJob = buildImportJob({
       id: "job-1",
       learning_resource: "resource-1",
-      resource_ready_for_learning: true,
+      processing_job_id: "processing-job-1",
+      processing_status: "QUEUED",
+      processing_stage: "queued",
+      processing_progress: 5,
+      resource_ready_for_learning: false,
     });
-    const seenRequests = [];
-    let resources = [];
+    const seenRequests: string[] = [];
+    const canonicalStatuses: string[] = [];
+    let canonicalPolls = 0;
+    let legacyDetailPolls = 0;
+    let resources: ReturnType<typeof buildLearningResource>[] = [];
 
     await mockApi(page, "academic/subjects/:subjectId/", {
       json: buildSubject(),
@@ -154,7 +162,7 @@ test.describe("Dashboard and subject smoke flow", () => {
         contentType: "application/json",
         body: JSON.stringify({
           ...buildImportJob({
-            ...completedJob,
+            ...legacyJob,
             status: "processing",
             status_detail: "processing",
             resource_ready_for_learning: false,
@@ -162,7 +170,28 @@ test.describe("Dashboard and subject smoke flow", () => {
         }),
       });
     });
-    await mockApi(page, "content-intelligence/import-jobs/:importJobId/", { json: completedJob });
+    await page.route("**/api/content-processing/jobs/processing-job-1/", async (route) => {
+      canonicalPolls += 1;
+      const canonical = canonicalPolls === 1
+        ? buildProcessingJob({ status: "INSPECTING", stage: "inspecting", progress: 10, stage_label: "Inspecting the document" })
+        : canonicalPolls === 2
+          ? buildProcessingJob()
+          : buildProcessingJob({
+              status: "READY_FOR_REVIEW",
+              stage: "validating",
+              progress: 98,
+              stage_label: "Ready for academic review",
+              review_required: true,
+              can_cancel: false,
+              completed_at: "2026-07-20T09:20:00Z",
+            });
+      canonicalStatuses.push(String(canonical.status));
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(canonical) });
+    });
+    await page.route("**/api/content-intelligence/import-jobs/job-1/", async (route) => {
+      legacyDetailPolls += 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(legacyJob) });
+    });
 
     await navigateToAuthenticatedRoute(page, "/dashboard/subjects/subject-1");
     await expect(page.getByRole("heading", { name: "Biology" })).toBeVisible({ timeout: 15000 });
@@ -172,8 +201,13 @@ test.describe("Dashboard and subject smoke flow", () => {
     await page.getByRole("button", { name: "Upload PDF or DOCX" }).click();
 
     await expect(
-      page.getByRole("article").filter({ hasText: "Starter notes" }).getByText("Completed", { exact: true }),
-    ).toBeVisible();
+      page.getByRole("article").filter({ hasText: "Starter notes" }).getByRole("heading", { name: "Ready for review" }),
+    ).toBeVisible({ timeout: 20_000 });
+    const uploadedCard = page.getByRole("article").filter({ hasText: "Starter notes" });
+    await expect(uploadedCard.getByText("98% processed — governed review required")).toBeVisible();
+    await expect(uploadedCard.getByText(/Processing job: processing-job-1/)).toBeVisible();
+    expect(canonicalStatuses).toEqual(["INSPECTING", "EXTRACTING", "READY_FOR_REVIEW"]);
+    expect(legacyDetailPolls).toBe(0);
     expect(seenRequests).toEqual(
       expect.arrayContaining([
         "http://localhost:8000/api/storage/files/",

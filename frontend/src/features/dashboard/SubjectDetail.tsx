@@ -18,8 +18,25 @@ import {
   processingStatusLabel,
   retryImportJob,
   type ContentImportJob,
+  type LegacyImportJobId,
 } from "@/services/content-intelligence";
 import { uploadStoredFile } from "@/services/storage";
+import { pollOperation } from "@/lib/polling";
+import { ApiError } from "@/services/api";
+import { contentProcessingApi } from "@/features/content-processing/api";
+import {
+  canonicalStatusLabel,
+  isCanonicalProcessingActive,
+  isCanonicalProcessingFailed,
+  isCanonicalProcessingTerminal,
+  PROCESSING_POLL_INTERVAL_MS,
+} from "@/features/content-processing/processingState";
+import {
+  toProcessingJobId,
+  type ProcessingDiagnostic,
+  type ProcessingJob,
+  type ProcessingJobId,
+} from "@/features/content-processing/types";
 
 type SubjectDetailProps = {
   subjectId: string;
@@ -33,7 +50,7 @@ type ImportPresentation = {
 };
 
 type PendingDelete = {
-  jobId: string;
+  jobId: LegacyImportJobId;
   resourceId: string;
   resourceTitle: string;
   label: string;
@@ -46,7 +63,23 @@ function getLatestImportJob(jobs: ContentImportJob[]): ContentImportJob | null {
   return jobs[0] ?? null;
 }
 
-function presentImportStatus(job: ContentImportJob | null): ImportPresentation {
+function presentImportStatus(
+  job: ContentImportJob | null,
+  canonicalJob: ProcessingJob | null,
+  resolvingCanonical: boolean,
+): ImportPresentation {
+  if (resolvingCanonical) {
+    return { label: "Resolving processing status", tone: "processing" };
+  }
+  if (canonicalJob) {
+    if (canonicalJob.review_required) return { label: "Ready for review", tone: "review" };
+    if (isCanonicalProcessingActive(canonicalJob)) return { label: canonicalStatusLabel(canonicalJob), tone: "processing" };
+    if (canonicalJob.status === "READY_FOR_TEACHING") return { label: "Ready for teaching", tone: "completed" };
+    if (canonicalJob.status === "FAILED") return { label: "Processing failed", tone: "failed" };
+    if (canonicalJob.status === "CANCELLED" || canonicalJob.status === "DELETED") {
+      return { label: canonicalStatusLabel(canonicalJob), tone: "cancelled" };
+    }
+  }
   if (!job) {
     return { label: "Awaiting import", tone: "processing" };
   }
@@ -126,16 +159,165 @@ function statusBadgeClassName(tone: ImportStatusTone) {
 
 export function SubjectDetail({ subjectId }: SubjectDetailProps) {
   const uploadFormRef = useRef<HTMLFormElement | null>(null);
+  const requestVersionRef = useRef(0);
+  const pollingControllersRef = useRef(new Map<string, AbortController>());
   const [subject, setSubject] = useState<Subject | null>(null);
   const [resources, setResources] = useState<LearningResource[]>([]);
   const [jobsByResource, setJobsByResource] = useState<Record<string, ContentImportJob | null>>({});
+  const [processingJobsByResource, setProcessingJobsByResource] = useState<Record<string, ProcessingJob | null | undefined>>({});
+  const [diagnosticsByResource, setDiagnosticsByResource] = useState<Record<string, ProcessingDiagnostic[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
 
+  function replacePollingController(resourceId: string) {
+    pollingControllersRef.current.get(resourceId)?.abort();
+    const controller = new AbortController();
+    pollingControllersRef.current.set(resourceId, controller);
+    return controller;
+  }
+
+  function isTransientPollingError(pollingError: unknown) {
+    return pollingError instanceof TypeError ||
+      (pollingError instanceof ApiError &&
+        (pollingError.status === 0 || (pollingError.status !== undefined && pollingError.status >= 500)));
+  }
+
+  async function loadCanonicalDiagnostics(resourceId: string, jobId: ProcessingJobId) {
+    const diagnostics = await contentProcessingApi.diagnostics(jobId);
+    setDiagnosticsByResource((current) => ({ ...current, [resourceId]: diagnostics ?? [] }));
+  }
+
+  async function pollCanonicalJob(initialJob: ProcessingJob, resourceId: string) {
+    if (!isCanonicalProcessingActive(initialJob)) return;
+    const controller = replacePollingController(resourceId);
+    try {
+      const nextJob = await pollOperation({
+        signal: controller.signal,
+        intervalMs: PROCESSING_POLL_INTERVAL_MS,
+        request: async (signal) => {
+          const job = await contentProcessingApi.get(initialJob.processing_job_id, signal);
+          if (!job) throw new Error("Canonical processing status returned no response body.");
+          return job;
+        },
+        isSuccess: isCanonicalProcessingTerminal,
+        isFailure: isCanonicalProcessingFailed,
+        shouldRetryError: isTransientPollingError,
+        onValue: (job) => {
+          setProcessingJobsByResource((current) => ({ ...current, [resourceId]: job }));
+        },
+      });
+      if (!controller.signal.aborted && (nextJob.warning_count > 0 || nextJob.failure)) {
+        await loadCanonicalDiagnostics(resourceId, nextJob.processing_job_id);
+      }
+    } catch (pollingError) {
+      if (!(pollingError instanceof DOMException && pollingError.name === "AbortError")) {
+        setError(pollingError instanceof Error ? pollingError.message : "Unable to refresh processing status.");
+      }
+    } finally {
+      if (pollingControllersRef.current.get(resourceId) === controller) {
+        pollingControllersRef.current.delete(resourceId);
+      }
+    }
+  }
+
+  async function resolveCanonicalJob(legacyJob: ContentImportJob, resourceId: string, signal?: AbortSignal) {
+    if (!legacyJob.processing_job_id) {
+      setProcessingJobsByResource((current) => ({ ...current, [resourceId]: null }));
+      return null;
+    }
+    const canonicalId = toProcessingJobId(legacyJob.processing_job_id);
+    const canonicalJob = await pollOperation({
+      signal,
+      intervalMs: PROCESSING_POLL_INTERVAL_MS,
+      request: async (requestSignal) => {
+        const resolved = await contentProcessingApi.get(canonicalId, requestSignal);
+        if (!resolved) throw new Error("Canonical processing linkage returned no response body.");
+        return resolved;
+      },
+      isSuccess: () => true,
+      isFailure: () => false,
+      shouldRetryError: isTransientPollingError,
+    });
+    if (signal?.aborted) return null;
+    setProcessingJobsByResource((current) => ({ ...current, [resourceId]: canonicalJob }));
+    if (canonicalJob.warning_count > 0 || canonicalJob.failure) {
+      await loadCanonicalDiagnostics(resourceId, canonicalId);
+    }
+    if (isCanonicalProcessingActive(canonicalJob)) void pollCanonicalJob(canonicalJob, resourceId);
+    return canonicalJob;
+  }
+
+  async function pollLegacyJob(initialJob: ContentImportJob, resourceId: string) {
+    const controller = replacePollingController(resourceId);
+    try {
+      const nextJob = await pollOperation({
+        signal: controller.signal,
+        intervalMs: PROCESSING_POLL_INTERVAL_MS,
+        request: (signal) => getImportJob(initialJob.id, signal),
+        isSuccess: (job) => Boolean(job.processing_job_id) || isPollingTerminal(job),
+        isFailure: isProcessingFailed,
+        shouldRetryError: isTransientPollingError,
+        onValue: (job) => {
+          setJobsByResource((current) => ({ ...current, [resourceId]: job }));
+        },
+      });
+      if (!controller.signal.aborted && nextJob.processing_job_id) {
+        await resolveCanonicalJob(nextJob, resourceId);
+      }
+    } catch (pollingError) {
+      if (!(pollingError instanceof DOMException && pollingError.name === "AbortError")) {
+        setError(pollingError instanceof Error ? pollingError.message : "Unable to refresh legacy import status.");
+      }
+    } finally {
+      if (pollingControllersRef.current.get(resourceId) === controller) {
+        pollingControllersRef.current.delete(resourceId);
+      }
+    }
+  }
+
+  async function resolveCanonicalOnlyResource(resourceId: string, signal: AbortSignal) {
+    const jobs = await contentProcessingApi.listForResource(resourceId, signal);
+    if (signal.aborted) return;
+    const canonicalJob = jobs?.[0] ?? null;
+    setProcessingJobsByResource((current) => ({ ...current, [resourceId]: canonicalJob }));
+    if (canonicalJob && isCanonicalProcessingActive(canonicalJob)) {
+      void pollCanonicalJob(canonicalJob, resourceId);
+    }
+  }
+
+  function synchronizeProcessingJobs(entries: ReadonlyArray<readonly [string, ContentImportJob | null]>) {
+    for (const [resourceId, job] of entries) {
+      if (!job) {
+        setProcessingJobsByResource((current) => ({ ...current, [resourceId]: undefined }));
+        const controller = replacePollingController(resourceId);
+        void resolveCanonicalOnlyResource(resourceId, controller.signal).catch((resolutionError: unknown) => {
+          if (!(resolutionError instanceof DOMException && resolutionError.name === "AbortError")) {
+            setError(resolutionError instanceof Error ? resolutionError.message : "Unable to resolve processing status.");
+          }
+        });
+      } else if (job.processing_job_id) {
+        setProcessingJobsByResource((current) => ({ ...current, [resourceId]: undefined }));
+        const controller = replacePollingController(resourceId);
+        void resolveCanonicalJob(job, resourceId, controller.signal)
+          .catch((resolutionError: unknown) => {
+            if (!(resolutionError instanceof DOMException && resolutionError.name === "AbortError")) {
+              setError(resolutionError instanceof Error ? resolutionError.message : "Unable to resolve canonical processing status.");
+            }
+          });
+      } else if (isActivelyProcessing(job)) {
+        setProcessingJobsByResource((current) => ({ ...current, [resourceId]: null }));
+        void pollLegacyJob(job, resourceId);
+      } else {
+        setProcessingJobsByResource((current) => ({ ...current, [resourceId]: null }));
+      }
+    }
+  }
+
   async function loadSubjectData() {
+    const requestVersion = ++requestVersionRef.current;
     setLoading(true);
     setError(null);
 
@@ -144,7 +326,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
       try {
         nextSubject = await getSubject(subjectId);
       } catch (loadSubjectError) {
-        if (loadSubjectError instanceof Error && "status" in loadSubjectError && (loadSubjectError as { status?: number }).status === 404) {
+        if (loadSubjectError instanceof ApiError && loadSubjectError.status === 404) {
           const subjects = await listSubjects();
           nextSubject = subjects.find((item) => item.id === subjectId) ?? null;
           if (!nextSubject) {
@@ -155,9 +337,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
         }
       }
 
-      setSubject(nextSubject);
       const nextResources = await listResourcesForSubject(subjectId);
-      setResources(nextResources);
 
       const settledJobEntries = await Promise.allSettled(
         nextResources.map(async (resource) => {
@@ -170,34 +350,69 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
         .map((result) => result.value);
       const failedJobLoads = settledJobEntries.some((result) => result.status === "rejected");
 
+      if (requestVersion !== requestVersionRef.current) return;
+      setSubject(nextSubject);
+      setResources(nextResources);
       setJobsByResource(Object.fromEntries(jobEntries));
+      synchronizeProcessingJobs(jobEntries);
       if (failedJobLoads) {
         setError("The subject loaded, but some import status details could not be retrieved right now.");
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load this subject right now.");
+      if (requestVersion === requestVersionRef.current) {
+        setError(loadError instanceof Error ? loadError.message : "Unable to load this subject right now.");
+      }
     } finally {
-      setLoading(false);
+      if (requestVersion === requestVersionRef.current) setLoading(false);
     }
   }
 
   useEffect(() => {
-    void loadSubjectData();
-  }, [subjectId]);
-
-  async function pollImportJob(importJobId: string, resourceId: string) {
-    let nextJob = await getImportJob(importJobId);
-
-    while (!isPollingTerminal(nextJob)) {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      nextJob = await getImportJob(importJobId);
+    const requestVersion = ++requestVersionRef.current;
+    let active = true;
+    async function synchronizeSubject() {
+      try {
+        let nextSubject: Subject | null;
+        try {
+          nextSubject = await getSubject(subjectId);
+        } catch (loadSubjectError) {
+          if (!(loadSubjectError instanceof ApiError) || loadSubjectError.status !== 404) throw loadSubjectError;
+          const subjects = await listSubjects();
+          nextSubject = subjects.find((item) => item.id === subjectId) ?? null;
+          if (!nextSubject) throw loadSubjectError;
+        }
+        const nextResources = await listResourcesForSubject(subjectId);
+        const settled = await Promise.allSettled(nextResources.map(async (resource) => {
+          const jobs = await listImportJobsForResource(resource.id);
+          return [resource.id, getLatestImportJob(jobs)] as const;
+        }));
+        if (!active || requestVersion !== requestVersionRef.current) return;
+        setSubject(nextSubject);
+        setResources(nextResources);
+        setJobsByResource(Object.fromEntries(
+          settled.filter((item): item is PromiseFulfilledResult<readonly [string, ContentImportJob | null]> => item.status === "fulfilled").map((item) => item.value),
+        ));
+        synchronizeProcessingJobs(
+          settled
+            .filter((item): item is PromiseFulfilledResult<readonly [string, ContentImportJob | null]> => item.status === "fulfilled")
+            .map((item) => item.value),
+        );
+        setError(settled.some((item) => item.status === "rejected") ? "The subject loaded, but some import status details could not be retrieved right now." : null);
+      } catch (loadError) {
+        if (active && requestVersion === requestVersionRef.current) {
+          setError(loadError instanceof Error ? loadError.message : "Unable to load this subject right now.");
+        }
+      } finally {
+        if (active && requestVersion === requestVersionRef.current) setLoading(false);
+      }
     }
-
-    setJobsByResource((current) => ({
-      ...current,
-      [resourceId]: nextJob,
-    }));
-  }
+    void synchronizeSubject();
+    return () => {
+      active = false;
+      for (const controller of pollingControllersRef.current.values()) controller.abort();
+      pollingControllersRef.current.clear();
+    };
+  }, [subjectId]);
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -240,31 +455,56 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
       }));
       form.reset();
 
-      if (isActivelyProcessing(job)) {
-        await pollImportJob(job.id, resource.id);
+      if (job.processing_job_id) {
+        setProcessingJobsByResource((current) => ({ ...current, [resource.id]: undefined }));
+        await resolveCanonicalJob(job, resource.id);
+      } else if (isActivelyProcessing(job)) {
+        setProcessingJobsByResource((current) => ({ ...current, [resource.id]: null }));
+        void pollLegacyJob(job, resource.id);
       } else {
         await loadSubjectData();
       }
     } catch (uploadError) {
+      if (uploadError instanceof DOMException && uploadError.name === "AbortError") return;
       setError(uploadError instanceof Error ? uploadError.message : "Unable to upload this resource right now.");
     } finally {
       setUploading(false);
     }
   }
 
-  async function handleRetry(resourceId: string, jobId: string) {
+  async function handleRetry(resourceId: string, legacyJob: ContentImportJob, canonicalJob: ProcessingJob | null) {
     setError(null);
 
     try {
-      const retriedJob = await retryImportJob(jobId);
-      setJobsByResource((current) => ({
-        ...current,
-        [resourceId]: retriedJob,
-      }));
-      await pollImportJob(retriedJob.id, resourceId);
-      await loadSubjectData();
+      if (canonicalJob) {
+        const retriedJob = await contentProcessingApi.retry(canonicalJob.processing_job_id);
+        if (!retriedJob) throw new Error("Canonical retry returned no response body.");
+        setProcessingJobsByResource((current) => ({ ...current, [resourceId]: retriedJob }));
+        void pollCanonicalJob(retriedJob, resourceId);
+      } else {
+        const retriedJob = await retryImportJob(legacyJob.id);
+        setJobsByResource((current) => ({ ...current, [resourceId]: retriedJob }));
+        if (retriedJob.processing_job_id) {
+          await resolveCanonicalJob(retriedJob, resourceId);
+        } else {
+          void pollLegacyJob(retriedJob, resourceId);
+        }
+      }
     } catch (retryError) {
+      if (retryError instanceof DOMException && retryError.name === "AbortError") return;
       setError(retryError instanceof Error ? retryError.message : "Unable to retry this import right now.");
+    }
+  }
+
+  async function handleCancel(resourceId: string, canonicalJob: ProcessingJob) {
+    setError(null);
+    try {
+      const cancelledJob = await contentProcessingApi.cancel(canonicalJob.processing_job_id);
+      if (!cancelledJob) throw new Error("Canonical cancellation returned no response body.");
+      pollingControllersRef.current.get(resourceId)?.abort();
+      setProcessingJobsByResource((current) => ({ ...current, [resourceId]: cancelledJob }));
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : "Unable to cancel processing right now.");
     }
   }
 
@@ -287,21 +527,30 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
     }
   }
 
-  const resourceCards = useMemo(
-    () =>
-      resources.map((resource) => {
+  const resourceCards = resources.map((resource) => {
         const job = jobsByResource[resource.id] ?? null;
-        const presentation = presentImportStatus(job);
-        const authoritativeStatus = authoritativeProcessingStatus(job);
-        const reviewRequired = isReviewRequired(job);
-        const readyForLearning = isReadyForTeaching(job) || (!authoritativeStatus && Boolean(resource.resource_ready_for_learning || job?.resource_ready_for_learning));
-        const canDelete = Boolean(job && !isActivelyProcessing(job));
-        const hasFailedImportAction = isProcessingFailed(job);
+        const canonicalState = processingJobsByResource[resource.id];
+        const canonicalJob = canonicalState ?? null;
+        const resolvingCanonical = Boolean(job?.processing_job_id) && canonicalState === undefined;
+        const presentation = presentImportStatus(job, canonicalJob, resolvingCanonical);
+        const authoritativeStatus = canonicalJob ? canonicalJob.status : authoritativeProcessingStatus(job);
+        const reviewRequired = canonicalJob ? canonicalJob.review_required : isReviewRequired(job);
+        const readyForLearning = canonicalJob
+          ? canonicalJob.ready_for_teaching
+          : isReadyForTeaching(job) || (!authoritativeStatus && Boolean(resource.resource_ready_for_learning || job?.resource_ready_for_learning));
+        const activelyProcessing = canonicalJob ? isCanonicalProcessingActive(canonicalJob) : isActivelyProcessing(job);
+        const canDelete = Boolean(job && !activelyProcessing);
+        const hasFailedImportAction = canonicalJob ? isCanonicalProcessingFailed(canonicalJob) : job !== null && isProcessingFailed(job);
         const deleteLabel = job?.status === "failed" || job?.status === "cancelled" ? "Delete failed upload" : "Delete document";
-        const failure = failureReason(job);
-        const activeStageLabel = processingStageLabel(job);
-        const progress = typeof job?.processing_progress === "number" ? job.processing_progress : null;
-        const attempt = typeof job?.processing_attempt === "number" ? job.processing_attempt : null;
+        const failure = canonicalJob?.failure?.message ?? failureReason(job);
+        const activeStageLabel = resolvingCanonical
+          ? "Resolving processing status"
+          : canonicalJob ? canonicalStatusLabel(canonicalJob) : processingStageLabel(job);
+        const progress = resolvingCanonical
+          ? null
+          : canonicalJob?.progress ?? (typeof job?.processing_progress === "number" ? job.processing_progress : null);
+        const attempt = canonicalJob?.attempt ?? (typeof job?.processing_attempt === "number" ? job.processing_attempt : null);
+        const diagnostics = diagnosticsByResource[resource.id] ?? [];
 
         return (
           <article className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-5" key={resource.id}>
@@ -330,7 +579,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
               </div>
               <div>
                 <dt className="font-medium text-[var(--color-foreground)]">Warnings</dt>
-                <dd className="mt-1">{job?.processing_warning_count ?? job?.validation_findings?.length ?? 0}</dd>
+                <dd className="mt-1">{canonicalJob?.warning_count ?? job?.processing_warning_count ?? job?.validation_findings?.length ?? 0}</dd>
               </div>
             </dl>
 
@@ -356,9 +605,28 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
                         style={{ width: `${Math.max(0, Math.min(progress, 100))}%` }}
                       />
                     </div>
-                    <p>{reviewRequired ? `${progress}% complete — publication pending review` : `${progress}% complete`}</p>
+                    <p>{reviewRequired ? `${progress}% processed — governed review required` : `${progress}% processed`}</p>
                   </div>
                 ) : null}
+                {canonicalJob && isCanonicalProcessingActive(canonicalJob) ? <p className="mt-2">Processing is still active.</p> : null}
+                {canonicalJob ? (
+                  <>
+                    <p className="mt-2">Last confirmed update: {new Date(canonicalJob.updated_at).toLocaleString()}</p>
+                    <p className="mt-2 break-all text-xs">
+                      Processing job: {canonicalJob.processing_job_id}
+                      {job ? `; legacy import: ${job.id}` : ""}
+                    </p>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+            {diagnostics.length ? (
+              <div className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-warning)]/60 p-4">
+                <h4 className="text-sm font-semibold text-[var(--color-foreground)]">Processing diagnostics</h4>
+                <ul className="mt-2 space-y-2 text-sm text-[var(--color-muted-foreground)]">
+                  {diagnostics.map((diagnostic) => <li key={diagnostic.id}>{diagnostic.public_message}</li>)}
+                </ul>
               </div>
             ) : null}
 
@@ -366,7 +634,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
               <div className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-primary)]/50 p-4 text-sm">
                 <h4 className="font-semibold text-[var(--color-foreground)]">Ready for review</h4>
                 <p className="mt-2 text-[var(--color-muted-foreground)]">
-                  Processing completed successfully, but this document needs academic review before it can be published.
+                  Processing completed successfully, but this document needs academic review before it can become official Academic content.
                 </p>
                 {job?.proposal ? (
                   <dl className="mt-3 grid gap-2 text-[var(--color-muted-foreground)] sm:grid-cols-3">
@@ -393,7 +661,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
               </div>
             ) : null}
 
-            {hasFailedImportAction ? (
+            {job && hasFailedImportAction ? (
               <div className="mt-4 space-y-3">
                 <p className="text-sm text-[var(--color-danger)]">
                   {job.error_message || "The import failed before content could be processed."}
@@ -406,10 +674,10 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
                   a PDF or DOCX, and contains selectable text or stable document structure.
                 </p>
                 <div className="flex flex-wrap gap-3">
-                  {job.can_retry_processing ?? true ? (
+                  {(canonicalJob ? canonicalJob.can_retry : job.can_retry_processing ?? true) ? (
                     <button
                       className="inline-flex min-h-10 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-sm font-medium transition hover:bg-[var(--color-accent)]/25"
-                      onClick={() => void handleRetry(resource.id, job.id)}
+                      onClick={() => void handleRetry(resource.id, job, canonicalJob)}
                       type="button"
                     >
                       Retry import
@@ -433,10 +701,18 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
               </div>
             ) : null}
 
-            {job && isActivelyProcessing(job) ? (
+            {job && activelyProcessing ? (
               <div className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-border)] p-4 text-sm text-[var(--color-muted-foreground)]">
-                Import is still running. The resource outline will unlock as soon as the backend marks this
-                document ready for learning.
+                Processing is still active. The resource outline remains governed until the backend reaches the appropriate state.
+                {canonicalJob?.can_cancel ? (
+                  <button
+                    className="ml-3 inline-flex min-h-10 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-sm font-medium"
+                    onClick={() => void handleCancel(resource.id, canonicalJob)}
+                    type="button"
+                  >
+                    Cancel processing
+                  </button>
+                ) : null}
               </div>
             ) : null}
 
@@ -472,9 +748,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
             </div>
           </article>
         );
-      }),
-    [jobsByResource, resources],
-  );
+      });
 
   const importSummary = useMemo(() => {
     let processing = 0;
@@ -486,7 +760,12 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
 
     for (const resource of resources) {
       const job = jobsByResource[resource.id] ?? null;
-      const presentation = presentImportStatus(job);
+      const canonicalState = processingJobsByResource[resource.id];
+      const presentation = presentImportStatus(
+        job,
+        canonicalState ?? null,
+        Boolean(job?.processing_job_id) && canonicalState === undefined,
+      );
       if (presentation.tone === "processing") {
         processing += 1;
       } else if (presentation.tone === "review") {
@@ -503,7 +782,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
     }
 
     return { processing, review, completed, warnings, failed, cancelled };
-  }, [jobsByResource, resources]);
+  }, [jobsByResource, processingJobsByResource, resources]);
 
   if (loading) {
     return <LoadingState message="Loading subject workspace..." />;
@@ -514,7 +793,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
   }
 
   if (!subject) {
-    return <ErrorState title="Subject unavailable" message="We couldn't find this subject." />;
+    return <ErrorState title="Subject unavailable" message="We could not find this subject." />;
   }
 
   return (

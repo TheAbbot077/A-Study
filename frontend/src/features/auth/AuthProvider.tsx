@@ -53,8 +53,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void refreshUser();
-  }, [refreshUser]);
+    let active = true;
+    async function restoreSession() {
+      try {
+        const currentUser = await getCurrentUser();
+        if (!active) return;
+        setUser(currentUser);
+        setStatus(currentUser ? "authenticated" : "unauthenticated");
+        setError(null);
+      } catch (restoreError) {
+        if (!active) return;
+        setUser(null);
+        setStatus("unauthenticated");
+        setError(restoreError instanceof Error ? restoreError.message : "Unable to load your session.");
+      }
+    }
+    void restoreSession();
+    return () => { active = false; };
+  }, []);
 
   const login = useCallback(async (payload: { email: string; password: string }) => {
     const authenticatedUser = await loginRequest(payload);

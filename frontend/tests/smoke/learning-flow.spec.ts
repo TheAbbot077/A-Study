@@ -18,8 +18,6 @@ import {
 } from "./helpers/api";
 
 test.describe("Resource, concept, and assessment smoke flow", () => {
-  test.describe.configure({ timeout: 90_000 });
-
   async function mockConceptHierarchy(page: import("@playwright/test").Page) {
     await mockApi(page, "academic/content-concepts/:conceptId/", { json: buildConcept() });
     await mockApi(page, "academic/content-sections/:sectionId/", { json: buildSection() });
@@ -108,7 +106,7 @@ test.describe("Resource, concept, and assessment smoke flow", () => {
     await expectNoNextNotFound(page);
   });
 
-  test("resource detail represents ready for review without published content", async ({ page }) => {
+  test("resource detail represents ready for review without official Academic content", async ({ page }) => {
     await mockApi(page, "academic/learning-resources/:resourceId/", {
       json: buildLearningResource({
         id: "resource-review",
@@ -138,7 +136,8 @@ test.describe("Resource, concept, and assessment smoke flow", () => {
     await navigateToAuthenticatedRoute(page, "/dashboard/resources/resource-review");
 
     await expect(page.getByRole("heading", { name: "Ready for review" })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("No academic sections or concepts have been published yet.")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Governed content workflow" })).toBeVisible();
+    await expect(page.getByText("No official Academic sections or concepts exist yet.")).toBeVisible();
     await expect(page.getByText("Academic review required", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Retry import" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: /Next concept/ })).toHaveCount(0);

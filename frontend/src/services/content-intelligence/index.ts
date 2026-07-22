@@ -9,6 +9,16 @@ export type ValidationFinding = {
   created_at: string;
 };
 
+declare const legacyImportJobIdBrand: unique symbol;
+export type LegacyImportJobId = string & { readonly [legacyImportJobIdBrand]: "LegacyImportJobId" };
+export function toLegacyImportJobId(value: string): LegacyImportJobId {
+  return value as LegacyImportJobId;
+}
+
+export function legacyImportJobPath(jobId: LegacyImportJobId, action?: "retry") {
+  return `content-intelligence/import-jobs/${jobId}/${action ? `${action}/` : ""}`;
+}
+
 export type ProcessingStatus =
   | "created"
   | "queued"
@@ -37,7 +47,7 @@ export type ImportProposalSummary = {
 };
 
 export type ContentImportJob = {
-  id: string;
+  id: LegacyImportJobId;
   learning_resource: string;
   stored_file?: string | null;
   format_type: "pdf" | "docx";
@@ -162,19 +172,19 @@ export async function listImportJobsForResource(learningResourceId: string): Pro
   );
 }
 
-export async function getImportJob(importJobId: string): Promise<ContentImportJob> {
-  return (await apiRequest<ContentImportJob>(`content-intelligence/import-jobs/${importJobId}/`)) as ContentImportJob;
+export async function getImportJob(importJobId: LegacyImportJobId, signal?: AbortSignal): Promise<ContentImportJob> {
+  return (await apiRequest<ContentImportJob>(legacyImportJobPath(importJobId), { signal })) as ContentImportJob;
 }
 
-export async function retryImportJob(importJobId: string): Promise<ContentImportJob> {
-  return (await apiRequest<ContentImportJob>(`content-intelligence/import-jobs/${importJobId}/retry/`, {
+export async function retryImportJob(importJobId: LegacyImportJobId): Promise<ContentImportJob> {
+  return (await apiRequest<ContentImportJob>(legacyImportJobPath(importJobId, "retry"), {
     method: "POST",
     body: JSON.stringify({}),
   })) as ContentImportJob;
 }
 
-export async function deleteImportJob(importJobId: string): Promise<void> {
-  await apiRequest(`content-intelligence/import-jobs/${importJobId}/`, {
+export async function deleteImportJob(importJobId: LegacyImportJobId): Promise<void> {
+  await apiRequest(legacyImportJobPath(importJobId), {
     method: "DELETE",
   });
 }

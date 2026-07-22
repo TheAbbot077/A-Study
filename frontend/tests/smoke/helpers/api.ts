@@ -1,4 +1,11 @@
-import { expect, type BrowserContext, type Page, type Route } from "@playwright/test";
+import {
+  expect,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+  type Response,
+  type Route,
+} from "@playwright/test";
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api").replace(/\/$/, "");
 const API_BASE = new URL(API_BASE_URL);
@@ -206,19 +213,149 @@ export async function mockAuthSession(
   };
 }
 
-export async function navigateToAuthenticatedRoute(page: Page, target: string) {
-  const authResponse = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return (
-      response.request().method().toUpperCase() === "GET" &&
-      url.pathname === `${API_BASE_PATH}/auth/me/` &&
-      response.ok()
-    );
-  });
+// Cold Next.js development compilation is setup work and must not consume a test's 30-second budget.
+const FRONTEND_ROUTE_WARMUP_TIMEOUT_MS = 120_000;
+const warmedFrontendModules = new Set<string>();
+const warmedFrontendAssets = new Set<string>();
+const globallyWarmedFrontendModules = new Set([
+  "/",
+  "/login",
+  "/signup",
+  "/dashboard",
+  "/dashboard/subjects/[subjectId]",
+  "/dashboard/resources/[resourceId]",
+  "/dashboard/concepts/[conceptId]",
+  "/dashboard/concepts/[conceptId]/assessment",
+  "/dashboard/academic-review/[proposalId]",
+  "/dashboard/academic-review/[proposalId]/governance",
+]);
 
-  await page.goto(target, { waitUntil: "domcontentloaded" });
-  await authResponse;
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible({ timeout: 15_000 });
+function frontendModuleKey(target: string) {
+  const path = new URL(target, SMOKE_APP_ORIGIN).pathname;
+  return path
+    .replace(/^\/dashboard\/academic-review\/[^/]+\/governance$/, "/dashboard/academic-review/[proposalId]/governance")
+    .replace(/^\/dashboard\/academic-review\/[^/]+$/, "/dashboard/academic-review/[proposalId]")
+    .replace(/^\/dashboard\/concepts\/[^/]+\/assessment$/, "/dashboard/concepts/[conceptId]/assessment")
+    .replace(/^\/dashboard\/concepts\/[^/]+$/, "/dashboard/concepts/[conceptId]")
+    .replace(/^\/dashboard\/resources\/[^/]+$/, "/dashboard/resources/[resourceId]")
+    .replace(/^\/dashboard\/subjects\/[^/]+$/, "/dashboard/subjects/[subjectId]");
+}
+
+export async function warmFrontendRoute(request: APIRequestContext, target: string) {
+  const moduleKey = frontendModuleKey(target);
+  if (warmedFrontendModules.has(moduleKey)) return;
+
+  const response = await request.get(target, {
+    failOnStatusCode: false,
+    maxRedirects: 0,
+    timeout: FRONTEND_ROUTE_WARMUP_TIMEOUT_MS,
+  });
+  try {
+    const status = response.status();
+    const isDocument = response.headers()["content-type"]?.includes("text/html") === true;
+
+    if (status !== 200 || !isDocument) {
+      throw new Error(
+        `Frontend route warm-up failed for ${target}: expected a 200 HTML document, received ${status} ${response.statusText()}.`,
+      );
+    }
+
+    const document = await response.text();
+    const assetSources = [
+      ...Array.from(document.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/gi), (match) => match[1]),
+      ...Array.from(
+        document.matchAll(/<link\b(?=[^>]*\brel="stylesheet")(?=[^>]*\bhref="([^"]+)")[^>]*>/gi),
+        (match) => match[1],
+      ),
+    ].filter((source): source is string => Boolean(source));
+
+    for (const source of new Set(assetSources)) {
+      const assetUrl = new URL(source, response.url()).toString();
+      if (warmedFrontendAssets.has(assetUrl)) continue;
+
+      const assetResponse = await request.get(assetUrl, {
+        failOnStatusCode: false,
+        timeout: FRONTEND_ROUTE_WARMUP_TIMEOUT_MS,
+      });
+      try {
+        if (assetResponse.status() !== 200) {
+          throw new Error(
+            `Frontend route warm-up failed for ${target}: asset ${source} returned ${assetResponse.status()}.`,
+          );
+        }
+        await assetResponse.body();
+        warmedFrontendAssets.add(assetUrl);
+      } finally {
+        await assetResponse.dispose();
+      }
+    }
+
+    warmedFrontendModules.add(moduleKey);
+  } finally {
+    await response.dispose();
+  }
+}
+
+export async function warmFrontendRoutes(request: APIRequestContext, targets: readonly string[]) {
+  for (const target of targets) {
+    await warmFrontendRoute(request, target);
+  }
+}
+
+export async function navigateToAuthenticatedRoute(page: Page, target: string) {
+  const authentication = { response: null as Response | null };
+  const recentApiRequests: string[] = [];
+  const pageErrors: string[] = [];
+  const observeAuthentication = (response: Response) => {
+    const url = new URL(response.url());
+    if (
+      response.request().method().toUpperCase() === "GET" &&
+      url.pathname === `${API_BASE_PATH}/auth/me/`
+    ) {
+      authentication.response = response;
+    }
+  };
+  const observeRequest = (request: import("@playwright/test").Request) => {
+    const url = new URL(request.url());
+    if (url.pathname === API_BASE_PATH || url.pathname.startsWith(`${API_BASE_PATH}/`)) {
+      recentApiRequests.push(`${request.method()} ${url.pathname}${url.search}`);
+      if (recentApiRequests.length > 8) recentApiRequests.shift();
+    }
+  };
+  const observePageError = (error: Error) => {
+    pageErrors.push(error.message);
+    if (pageErrors.length > 4) pageErrors.shift();
+  };
+
+  page.on("response", observeAuthentication);
+  page.on("request", observeRequest);
+  page.on("pageerror", observePageError);
+  try {
+    await page.goto(target, { waitUntil: "commit" });
+    const authenticatedControl = page.getByRole("button", { name: "Log out" });
+    await expect(authenticatedControl).toBeVisible({ timeout: 15_000 });
+    await expect(authenticatedControl).toBeEnabled();
+    if (authentication.response !== null && !authentication.response.ok()) {
+      throw new Error(`Authentication restoration failed with status ${authentication.response.status()}.`);
+    }
+  } catch (error) {
+    const authStatus = authentication.response?.status() ?? "not observed";
+    const detail = [
+      `Authenticated navigation failed.`,
+      `target=${new URL(target, SMOKE_APP_ORIGIN).toString()}`,
+      `current=${page.url()}`,
+      `warmed=${globallyWarmedFrontendModules.has(frontendModuleKey(target))}`,
+      `authStatus=${authStatus}`,
+      `pageClosed=${page.isClosed()}`,
+      `recentApiRequests=${JSON.stringify(recentApiRequests)}`,
+      `pageErrors=${JSON.stringify(pageErrors)}`,
+    ].join(" ");
+    throw new Error(detail, { cause: error });
+  } finally {
+    page.off("response", observeAuthentication);
+    page.off("request", observeRequest);
+    page.off("pageerror", observePageError);
+  }
 }
 
 export async function installUnhandledApiGuard(page: Page, testName = "unknown smoke test") {
@@ -344,17 +481,42 @@ export function buildImportJob(overrides: Record<string, unknown> = {}) {
   return { ...base, ...overrides };
 }
 
+export function buildProcessingJob(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "processing-job-1",
+    processing_job_id: "processing-job-1",
+    resource: "resource-1",
+    stored_file: "stored-file-1",
+    status: "EXTRACTING",
+    stage: "extracting",
+    progress: 25,
+    stage_label: "Extracting document content",
+    message: null,
+    attempt: 1,
+    warning_count: 0,
+    can_retry: false,
+    can_cancel: true,
+    failure: null,
+    review_required: false,
+    ready_for_teaching: false,
+    completed_at: null,
+    created_at: "2026-07-20T09:12:43Z",
+    updated_at: "2026-07-20T09:14:40Z",
+    ...overrides,
+  };
+}
+
 export function buildReviewRequiredImportJob(overrides: Record<string, unknown> = {}) {
   return buildImportJob({
     status: "processing",
     status_detail: "review_required",
-    error_message: "Review is required before academic content can be published.",
+    error_message: "Review is required before official Academic content can be created.",
     resource_ready_for_learning: false,
     processing_status: "ready_for_review",
     processing_stage: "validating",
     processing_progress: 98,
     processing_stage_label: "Ready for academic review",
-    processing_message: "Review is required before academic content can be published.",
+    processing_message: "Review is required before official Academic content can be created.",
     review_required: true,
     ready_for_teaching: false,
     processing_failure: null,

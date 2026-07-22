@@ -112,23 +112,14 @@ export function routePatternToRegex(routePattern) {
 }
 
 export function normalizeApiPath(rawPath) {
-  const withoutFragment = rawPath.split("#")[0];
-  const withoutOrigin = withoutFragment.replace(/^https?:\/\/[^/]+/i, "");
+  const withoutQueryOrFragment = rawPath.split(/[?#]/, 1)[0];
+  const withoutOrigin = withoutQueryOrFragment.replace(/^https?:\/\/[^/]+/i, "");
   const withoutApiPrefix = withoutOrigin.replace(/^\/?api\//, "");
   const normalizedBase = withoutApiPrefix.startsWith("/")
     ? withoutApiPrefix.slice(1)
     : withoutApiPrefix;
-  const replaced = normalizedBase.replace(/\$\{[^}]+\}/g, ":param");
-  const [pathname, queryString = ""] = replaced.split("?");
-  const queryKeys = queryString
-    .split("&")
-    .filter(Boolean)
-    .map((part) => part.split("=")[0])
-    .filter(Boolean)
-    .sort();
   return {
-    pathname,
-    queryKeys,
+    pathname: normalizedBase.replace(/\$\{[^}]+\}/g, ":param"),
   };
 }
 
@@ -165,7 +156,7 @@ export function scanApiTargetsFromContent(content, source) {
   const targets = [];
   const stringMaps = extractConstStringMaps(content);
   const patterns = [
-    /apiRequest(?:<[^>]+>)?\(\s*["'`]([^"'`]+)["'`]/g,
+    /apiRequest(?:<[^>]+>)?\(\s*["']([^"']+)["']/g,
     /apiRequest(?:<[^>]+>)?\(\s*\`([^`]+)\`/g,
     /fetch\(\s*\`[^`]*\/api\/([^`]+)\`/g,
   ];
@@ -201,14 +192,20 @@ export function findUnresolvedApiTargets(apiTargets, backendEndpoints) {
       regex: routePatternToRegex(entry.path),
     }));
 
-  return apiTargets.filter(({ path: rawPath }) => {
+  const unresolved = apiTargets.filter(({ path: rawPath }) => {
     const normalized = normalizeApiPath(rawPath);
     return !backendPatterns.some((entry) => {
-      if (!entry.regex.test(normalized.pathname)) {
-        return false;
-      }
-      const expectedKeys = [...(entry.queryKeys ?? [])].sort();
-      return JSON.stringify(expectedKeys) === JSON.stringify(normalized.queryKeys);
+      return entry.regex.test(normalized.pathname);
     });
   });
+
+  return [
+    ...new Map(
+      unresolved.map((entry) => {
+        const normalized = normalizeApiPath(entry.path);
+        const identity = `${entry.source}:${normalized.pathname}`;
+        return [identity, entry];
+      }),
+    ).values(),
+  ];
 }

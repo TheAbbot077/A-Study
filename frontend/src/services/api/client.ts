@@ -34,8 +34,12 @@ export async function apiRequest<TResponse>(
       details = undefined;
     }
 
+    const safeMessage =
+      details && typeof details === "object" && "detail" in details && typeof details.detail === "string"
+        ? details.detail
+        : `Request failed with status ${response.status}`;
     throw new ApiError(
-      `Request failed with status ${response.status}`,
+      safeMessage,
       response.status,
       response.headers.get("x-error-code") ?? undefined,
       details,

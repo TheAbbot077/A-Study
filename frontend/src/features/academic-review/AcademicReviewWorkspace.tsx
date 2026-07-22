@@ -1,56 +1,459 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { ErrorState, LoadingState } from "@/components/feedback";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { EmptyState, ErrorState, LoadingState } from "@/components/feedback";
 import { useAuth } from "@/features/auth/AuthProvider";
-import { approveReview, bulkReview, decideItem, editItem, evaluateApprovalReadiness, getApprovedProjection, getEvidence, getPopulationReadiness, getReview, listFindings, listOutline, populateApprovedProjection, rejectReview, requestReprocessing, resolveFinding, startReview, submitReview, type ApprovedProjection, type PopulationReadiness, type PopulationResult, type ReviewEvidence, type ReviewFinding, type ReviewItem, type ReviewSession } from "@/services/academic-review";
+import { GovernedWorkflowTimeline, mapGovernedWorkflow } from "@/features/governed-workflow";
+import { normalizeApiProblem, type ApiProblem } from "@/services/api";
+import {
+  decideItem,
+  editItem,
+  getEvidence,
+  getReview,
+  listFindings,
+  listOutline,
+  resolveFinding,
+  startReview,
+  submitReview,
+  type ReviewEvidence,
+  type ReviewFinding,
+  type ReviewItem,
+  type ReviewSession,
+} from "@/services/academic-review";
+import {
+  completionSummary,
+  orderedItems,
+  reviewCounts,
+  reviewLifecycle,
+  severityLabel,
+  unresolvedFindings,
+} from "./reviewViewModel";
 
-const panel = "rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-background)] p-5";
-const bulkPolicies = [
-  ["reject_toc", "Reject TOC-derived items"], ["reject_front_matter", "Reject front matter"], ["reject_page_markers", "Reject page markers"],
-  ["reject_heading_only_concepts", "Reject heading-only concepts"], ["reject_synthetic_navigation", "Reject synthetic navigation"],
-] as const;
+const panel = "rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-background)] p-5 shadow-[var(--shadow-card)]";
+const control = "rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]";
+const identifierPattern = /^[A-Za-z0-9-]{1,128}$/;
+
+type Workspace = {
+  session: ReviewSession;
+  items: ReviewItem[];
+  findings: ReviewFinding[];
+};
+
+async function acquireReviewWorkspace(
+  proposalId: string,
+  signal?: AbortSignal,
+  knownSessionId?: string,
+): Promise<Workspace> {
+  const session = knownSessionId
+    ? await getReview(knownSessionId, signal)
+    : await startReview(proposalId, signal);
+  const [outline, findings] = await Promise.all([
+    listOutline(session.id, signal),
+    listFindings(session.id, signal),
+  ]);
+  return { session, items: outline.results, findings };
+}
+
+function problemTitle(problem: ApiProblem) {
+  if (problem.status === 403) return "Review workspace unavailable";
+  if (problem.status === 404) return "Review workspace not found";
+  if (problem.status === 409) return "Review state changed";
+  if (problem.status === 0) return "Network connection failed";
+  return "Unable to load academic review";
+}
+
+function ItemEditor({
+  item,
+  editable,
+  busy,
+  onDirtyChange,
+  onSaveDecision,
+  onSaveEdit,
+}: {
+  item: ReviewItem;
+  editable: boolean;
+  busy: boolean;
+  onDirtyChange: (dirty: boolean) => void;
+  onSaveDecision: (decision: "accepted" | "rejected", reason: string) => Promise<void>;
+  onSaveEdit: (payload: { title: string; ordering?: number; reason: string }) => Promise<void>;
+}) {
+  const initialTitle = item.edit?.title || item.title;
+  const initialOrdering = item.edit?.ordering?.toString() ?? "";
+  const [title, setTitle] = useState(initialTitle);
+  const [ordering, setOrdering] = useState(initialOrdering);
+  const [reason, setReason] = useState(item.reason);
+  const dirty = title !== initialTitle || ordering !== initialOrdering || reason !== item.reason;
+
+  useEffect(() => {
+    onDirtyChange(dirty);
+    return () => onDirtyChange(false);
+  }, [dirty, onDirtyChange]);
+
+  const saveEdit = async () => {
+    const parsed = ordering ? Number(ordering) : undefined;
+    if (parsed !== undefined && (!Number.isInteger(parsed) || parsed < 1)) return;
+    await onSaveEdit({ title, ordering: parsed, reason });
+  };
+
+  return (
+    <section aria-labelledby="item-editor-title" className="space-y-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+          {item.item_type} · {item.decision}
+        </p>
+        <h2 className="mt-1 text-xl font-semibold" id="item-editor-title">{initialTitle}</h2>
+        <p className="mt-1 text-sm">Proposal confidence: {(item.confidence * 100).toFixed(0)}%</p>
+      </div>
+      {!editable ? <p className="rounded-md border p-3 text-sm">This review is read-only.</p> : (
+        <>
+          <div>
+            <label className="text-sm font-medium" htmlFor={`title-${item.id}`}>Reviewed title</label>
+            <input className={`${control} mt-1 w-full`} disabled={busy} id={`title-${item.id}`} maxLength={255} onChange={(event) => setTitle(event.target.value)} value={title} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-sm font-medium" htmlFor={`ordering-${item.id}`}>Reviewed order</label>
+              <input className={`${control} mt-1 w-full`} disabled={busy} id={`ordering-${item.id}`} min="1" onChange={(event) => setOrdering(event.target.value)} type="number" value={ordering} />
+            </div>
+            <div>
+              <label className="text-sm font-medium" htmlFor={`reason-${item.id}`}>Review note</label>
+              <input className={`${control} mt-1 w-full`} disabled={busy} id={`reason-${item.id}`} onChange={(event) => setReason(event.target.value)} value={reason} />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className={control} disabled={busy || title !== initialTitle || ordering !== initialOrdering} onClick={() => void onSaveDecision("accepted", reason)} type="button">Include item</button>
+            <button className={control} disabled={busy || title !== initialTitle || ordering !== initialOrdering} onClick={() => void onSaveDecision("rejected", reason)} type="button">Exclude item</button>
+            <button className={control} disabled={busy || !dirty || !title.trim()} onClick={() => void saveEdit()} type="button">
+              {busy ? "Saving…" : "Save edits"}
+            </button>
+            <span aria-live="polite" className="self-center text-sm">{dirty ? "Unsaved changes" : "All changes saved"}</span>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function CompletionDialog({
+  session,
+  findings,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  session: ReviewSession;
+  findings: ReviewFinding[];
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const summary = completionSummary(session, findings);
+  useEffect(() => {
+    ref.current?.showModal();
+  }, []);
+  return (
+    <dialog aria-labelledby="complete-review-title" className="m-auto max-w-lg rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] p-6 text-[var(--color-foreground)] backdrop:bg-black/50" onCancel={onCancel} ref={ref}>
+      <h2 className="text-xl font-semibold" id="complete-review-title">Complete human review?</h2>
+      <p className="mt-2 text-sm">Completion ends editing and advances this proposal to a later approval step. It does not approve or populate content.</p>
+      <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
+        <dt>Included sections</dt><dd>{summary.sections.included}</dd>
+        <dt>Excluded sections</dt><dd>{summary.sections.excluded}</dd>
+        <dt>Included concepts</dt><dd>{summary.concepts.included}</dd>
+        <dt>Excluded concepts</dt><dd>{summary.concepts.excluded}</dd>
+        <dt>Unresolved blockers</dt><dd>{summary.blockerCount}</dd>
+        <dt>Unresolved warnings</dt><dd>{summary.warningCount}</dd>
+        <dt>Review version</dt><dd>{session.version}</dd>
+      </dl>
+      <div className="mt-6 flex justify-end gap-3">
+        <button className={control} disabled={busy} onClick={onCancel} type="button">Keep reviewing</button>
+        <button className={control} disabled={busy} onClick={onConfirm} type="button">{busy ? "Completing…" : "Complete review"}</button>
+      </div>
+    </dialog>
+  );
+}
 
 export function AcademicReviewWorkspace({ proposalId }: { proposalId: string }) {
-  const { user } = useAuth();
-  const [session, setSession] = useState<ReviewSession | null>(null); const [items, setItems] = useState<ReviewItem[]>([]);
-  const [findings, setFindings] = useState<ReviewFinding[]>([]); const [selected, setSelected] = useState<ReviewItem | null>(null);
-  const [evidence, setEvidence] = useState<ReviewEvidence[]>([]); const [search, setSearch] = useState(""); const [filter, setFilter] = useState("all");
-  const [itemCount, setItemCount] = useState(0);
-  const [preview, setPreview] = useState<{ policy: string; count: number } | null>(null); const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(true);
-  const [projection, setProjection] = useState<ApprovedProjection | null>(null); const [populationReadiness, setPopulationReadiness] = useState<PopulationReadiness | null>(null);
-  const [populationResult, setPopulationResult] = useState<PopulationResult | null>(null); const [populating, setPopulating] = useState(false); const [populationKey, setPopulationKey] = useState<string | null>(null);
-  const roles = new Set(user?.institutions?.map((item) => item.role) ?? []); const canApprove = Boolean(user?.is_superuser || user?.is_staff || roles.has("administrator") || roles.has("institution_owner") || roles.has("system_administrator"));
+  const { status: authStatus } = useAuth();
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [evidence, setEvidence] = useState<ReviewEvidence[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [problem, setProblem] = useState<ApiProblem | null>(null);
+  const [notice, setNotice] = useState("");
+  const [findingFilter, setFindingFilter] = useState<"unresolved" | "all" | ReviewFinding["severity"]>("unresolved");
+  const [resolutionNotes, setResolutionNotes] = useState<Record<number, string>>({});
+  const [showCompletion, setShowCompletion] = useState(false);
 
-  async function refresh(active = session) {
-    if (!active) return;
-    const [nextSession, outline, nextFindings] = await Promise.all([getReview(active.id), listOutline(active.id, search), listFindings(active.id)]);
-    setSession(nextSession); setItems(outline.results); setItemCount(outline.count); setFindings(nextFindings);
-  }
-  useEffect(() => { let mounted = true; (async () => { try { const active = await startReview(proposalId); if (!mounted) return; setSession(active); const [outline, nextFindings] = await Promise.all([listOutline(active.id), listFindings(active.id)]); if (active.approved_projection_id) { const approved = await getApprovedProjection(active.approved_projection_id); if (approved && mounted) { setProjection(approved); setPopulationReadiness(await getPopulationReadiness(approved.id) ?? null); } } if (mounted) { setItems(outline.results); setItemCount(outline.count); setFindings(nextFindings); } } catch (cause) { if (mounted) setError(cause instanceof Error ? cause.message : "Unable to open academic review."); } finally { if (mounted) setLoading(false); } })(); return () => { mounted = false; }; }, [proposalId]);
-  const visible = useMemo(() => items.filter((item) => filter === "all" || item.decision === filter), [filter, items]);
-  async function choose(item: ReviewItem) { setSelected(item); setEvidence(session ? await getEvidence(session.id, item.id) : []); }
-  async function loadMore() { if (!session) return; const page = await listOutline(session.id, search, items.length); setItems((current) => [...current, ...page.results]); setItemCount(page.count); }
-  async function decide(decision: "accepted" | "rejected") { if (!session || !selected) return; await decideItem(session.id, selected.id, decision); await refresh(); setSelected({ ...selected, decision }); }
-  async function rename() { if (!session || !selected) return; const title = window.prompt("Reviewed title", selected.edit?.title || selected.title); if (!title) return; await editItem(session.id, selected.id, { title, reason: "Reviewer title correction" }); await refresh(); }
-  async function reorder() { if (!session || !selected) return; const raw = window.prompt("New position"); const ordering = Number(raw); if (!Number.isInteger(ordering) || ordering < 1) return; await editItem(session.id, selected.id, { ordering, reason: "Reviewer ordering correction" }); await refresh(); }
-  async function move() { if (!session || !selected) return; const sections = items.filter((item) => item.item_type === "section" && !["pending", "rejected"].includes(item.decision)); const target = window.prompt(`Accepted section ID (${sections.map((item) => `${item.item_id}: ${item.title}`).join(", ")})`); if (!target) return; await editItem(session.id, selected.id, selected.item_type === "concept" ? { target_section_id: target, reason: "Reviewer concept move" } : { parent_section_id: target, reason: "Reviewer parent change" }); await refresh(); }
-  async function runBulk(policy: string) { if (!session) return; const result = await bulkReview(session.id, policy, true); setPreview({ policy, count: result?.affected_count ?? 0 }); }
-  async function applyBulk() { if (!session || !preview) return; await bulkReview(session.id, preview.policy, false); setPreview(null); await refresh(); }
-  async function submit() { if (!session) return; const next = await submitReview(session.id); if (next) setSession(next); }
-  async function approve() { if (!session) return; const snapshot = await evaluateApprovalReadiness(session.id, session.version); if (!snapshot?.ready) { setError(`Approval blocked: ${snapshot?.reasons.join(", ") || "readiness requirements were not met"}.`); return; } const approved = await approveReview(session.id, snapshot.id, session.version, crypto.randomUUID()); if (approved) { const nextProjection = await getApprovedProjection(approved.projection_id); if (nextProjection) { setProjection(nextProjection); setPopulationReadiness(await getPopulationReadiness(nextProjection.id) ?? null); } } await refresh(); }
-  async function populate() { if (!projection || !populationReadiness?.ready || populating) return; if (!window.confirm("Create official Academic Platform sections and concepts from this immutable approved projection? Retrieval and teaching readiness remain separate later steps.")) return; const key = populationKey || crypto.randomUUID(); setPopulationKey(key); setPopulating(true); setError(null); try { const result = await populateApprovedProjection(projection.id, projection.checksum, key); if (result) { setPopulationResult(result); setPopulationReadiness(await getPopulationReadiness(projection.id) ?? null); } } catch (cause) { setError(cause instanceof Error ? cause.message : "Academic population failed."); } finally { setPopulating(false); } }
-  async function reject() { if (!session) return; const reason = window.prompt("Why is this proposal rejected?"); if (!reason) return; await rejectReview(session.id, reason, session.version, crypto.randomUUID()); await refresh(); }
-  async function resolve(finding: ReviewFinding, override = false) { if (!session) return; if (!override && !selected) return; const reason = window.prompt(override ? "Administrator override reason" : "Resolution note"); if (!reason) return; await resolveFinding(session.id, { validation_id: finding.id, resolution_type: override ? "override" : selected?.decision === "rejected" ? "rejection" : selected?.decision === "moved" ? "move" : "edit", item_decision_id: selected?.id, note: override ? "" : reason, override_reason: override ? reason : "" }); await refresh(); }
-  async function reprocess() { if (!session) return; const reason = window.prompt("Why should this document be reprocessed?"); if (!reason) return; const next = await requestReprocessing(session.id, reason); if (next) setSession(next); }
-  if (loading) return <LoadingState message="Opening academic proposal review..." />;
-  if (error || !session) return <ErrorState title="Academic review unavailable" message={error || "No review session exists."} />;
-  return <section className="space-y-6">
-    <header className={panel}><p className="text-sm font-medium uppercase tracking-wide text-[var(--color-primary)]">Academic proposal review</p><h1 className="mt-2 text-3xl font-semibold">{session.resource.title}</h1><div className="mt-4 grid gap-3 text-sm sm:grid-cols-4"><span>Status: {session.status.replaceAll("_", " ")}</span><span>Confidence: {(session.confidence * 100).toFixed(1)}%</span><span>Pending: {session.summary.section_pending + session.summary.concept_pending}</span><span>Blocking findings: {session.summary.outstanding_findings}</span></div></header>
-    <div className={`${panel} flex flex-wrap gap-3`} aria-label="Bulk review toolbar">{bulkPolicies.map(([code, label]) => <button className="rounded border px-3 py-2 text-sm" key={code} onClick={() => void runBulk(code)} type="button">{label}</button>)}{preview ? <div className="w-full rounded border border-[var(--color-warning)] p-3 text-sm">This policy will reject {preview.count} pending items. <button className="ml-3 font-semibold" onClick={() => void applyBulk()} type="button">Apply bulk rejection</button></div> : null}</div>
-    <div className="grid gap-6 lg:grid-cols-[1.2fr,0.8fr]"><div className={panel}><div className="flex gap-3"><input aria-label="Search proposal" className="min-w-0 flex-1 rounded border px-3 py-2" onChange={(event) => setSearch(event.target.value)} value={search} /><button className="rounded border px-3" onClick={() => void refresh()} type="button">Search</button><select aria-label="Decision filter" className="rounded border px-3" onChange={(event) => setFilter(event.target.value)} value={filter}><option value="all">All</option><option value="pending">Pending</option><option value="accepted">Accepted</option><option value="rejected">Rejected</option><option value="edited">Edited</option></select></div><ul className="mt-4 space-y-2">{visible.map((item) => <li key={item.id}><button className="w-full rounded border p-3 text-left" onClick={() => void choose(item)} type="button"><span className="font-medium">{item.item_type === "section" ? "Section" : "Concept"}: {item.edit?.title || item.title}</span><span className="ml-3 text-xs uppercase">{item.decision}</span><span className="float-right text-xs">{(item.confidence * 100).toFixed(0)}%</span></button></li>)}</ul>{items.length < itemCount ? <button className="mt-4 rounded border px-4 py-2" onClick={() => void loadMore()} type="button">Load more proposal items</button> : null}</div>
-      <aside className={`${panel} space-y-4`}><h2 className="text-xl font-semibold">Evidence and decision</h2>{selected ? <><h3 className="font-medium">{selected.title}</h3><div className="flex flex-wrap gap-2"><button className="rounded border px-3 py-2" onClick={() => void decide("accepted")} type="button">Accept</button><button className="rounded border px-3 py-2" onClick={() => void decide("rejected")} type="button">Reject</button><button className="rounded border px-3 py-2" onClick={() => void rename()} type="button">Rename</button><button className="rounded border px-3 py-2" onClick={() => void reorder()} type="button">Reorder</button><button className="rounded border px-3 py-2" onClick={() => void move()} type="button">{selected.item_type === "concept" ? "Move concept" : "Change parent"}</button></div>{evidence.map((row) => <article className="rounded border p-3 text-sm" key={row.id}><p>Pages {row.page_start ?? "?"}–{row.page_end ?? row.page_start ?? "?"} · {row.evidence_strength} · {(row.confidence * 100).toFixed(0)}%</p><p className="mt-2 text-[var(--color-muted-foreground)]">{row.supporting_text || row.hierarchy}</p></article>)}</> : <p className="text-sm text-[var(--color-muted-foreground)]">Select a section or concept to inspect its provenance.</p>}</aside></div>
-    <section className={panel}><h2 className="text-xl font-semibold">Approval</h2><ul className="mt-3 space-y-2 text-sm">{findings.filter((finding) => !finding.passed).map((finding) => <li className="rounded border p-3" key={finding.id}><span>{finding.resolved ? "Resolved" : "Outstanding"}: {finding.message}</span>{!finding.resolved ? <span className="ml-3"><button className="font-medium" disabled={!selected} onClick={() => void resolve(finding)} type="button">Resolve with selected item</button>{canApprove ? <button className="ml-3 font-medium" onClick={() => void resolve(finding, true)} type="button">Override</button> : null}</span> : null}</li>)}</ul><div className="mt-4 flex flex-wrap gap-3"><button className="rounded border px-4 py-2" disabled={!session.summary.ready || session.status !== "in_progress"} onClick={() => void submit()} type="button">Submit for approval</button>{canApprove ? <button className="rounded border px-4 py-2" disabled={session.status !== "ready_for_approval"} onClick={() => void approve()} type="button">Approve and publish</button> : null}{canApprove ? <button className="rounded border px-4 py-2" onClick={() => void reject()} type="button">Reject proposal</button> : null}<button className="rounded border px-4 py-2" onClick={() => void reprocess()} type="button">Request reprocessing</button></div></section>
-    {projection && populationReadiness ? <section className={panel}><h2 className="text-xl font-semibold">Academic Platform population</h2><p className="mt-2 text-sm">Status: {populationResult?.status ?? populationReadiness.status.replaceAll("_", " ")}. This creates official academic content; retrieval synchronization and teaching readiness are not included.</p><p className="mt-2 text-sm">Planned: {populationReadiness.expected_section_count} sections and {populationReadiness.expected_concept_count} concepts.</p>{populationReadiness.blockers.length ? <ul className="mt-3 text-sm">{populationReadiness.blockers.map((blocker) => <li key={blocker.code}>{blocker.code}: {blocker.message}</li>)}</ul> : null}{populationResult ? <p className="mt-3 text-sm">Created {populationResult.created_sections} sections and {populationResult.created_concepts} concepts; matched {populationResult.matched_sections} sections and {populationResult.matched_concepts} concepts.</p> : null}{canApprove && !populationResult ? <button className="mt-4 rounded border px-4 py-2" disabled={!populationReadiness.ready || populating} onClick={() => void populate()} type="button">{populating ? "Populating..." : "Populate Academic Platform"}</button> : null}</section> : null}
-  </section>;
+  const routeProblem = useMemo<ApiProblem | null>(() => {
+    if (authStatus === "loading") return null;
+    if (authStatus !== "authenticated") {
+      return {
+        status: 403,
+        code: "REVIEW_AUTHENTICATION_REQUIRED",
+        message: "Sign in with reviewer access to open this workspace.",
+      };
+    }
+    if (!identifierPattern.test(proposalId)) {
+      return {
+        status: 400,
+        code: "INVALID_REVIEW_ROUTE",
+        message: "The proposal identifier is malformed.",
+      };
+    }
+    return null;
+  }, [authStatus, proposalId]);
+
+  useEffect(() => {
+    if (authStatus !== "authenticated" || !identifierPattern.test(proposalId)) return;
+    const controller = new AbortController();
+    async function synchronize() {
+      try {
+        const result = await acquireReviewWorkspace(proposalId, controller.signal);
+        if (controller.signal.aborted) return;
+        setWorkspace(result);
+        setSelectedId((current) => result.items.some((item) => item.id === current) ? current : result.items[0]?.id ?? null);
+      } catch (error) {
+        if (!controller.signal.aborted) setProblem(normalizeApiProblem(error));
+      }
+    }
+    void synchronize();
+    return () => controller.abort();
+  }, [authStatus, proposalId]);
+
+  const selected = workspace?.items.find((item) => item.id === selectedId) ?? null;
+  useEffect(() => {
+    if (!workspace || !selected) {
+      return;
+    }
+    const controller = new AbortController();
+    void getEvidence(workspace.session.id, selected.id, controller.signal)
+      .then(setEvidence)
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setProblem(normalizeApiProblem(error));
+      });
+    return () => controller.abort();
+  }, [selected, workspace]);
+
+  const refresh = async (discardDirty = false) => {
+    if (!workspace || busy) return;
+    if (dirty && !discardDirty && !window.confirm("Discard unsaved changes and refresh from the server?")) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      const result = await acquireReviewWorkspace(proposalId, undefined, workspace.session.id);
+      setWorkspace(result);
+      setSelectedId((current) => result.items.some((item) => item.id === current) ? current : result.items[0]?.id ?? null);
+      setDirty(false);
+      setNotice("Workspace refreshed from the server.");
+    } catch (error) {
+      setProblem(normalizeApiProblem(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runCommand = async (command: () => Promise<unknown>, success: string) => {
+    if (!workspace || busy) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      await command();
+      const result = await acquireReviewWorkspace(proposalId, undefined, workspace.session.id);
+      setWorkspace(result);
+      setSelectedId((current) => result.items.some((item) => item.id === current) ? current : result.items[0]?.id ?? null);
+      setDirty(false);
+      setNotice(success);
+    } catch (error) {
+      setProblem(normalizeApiProblem(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const choose = (item: ReviewItem) => {
+    if (dirty && !window.confirm("Discard unsaved edits and inspect another proposal item?")) return;
+    setSelectedId(item.id);
+    setDirty(false);
+  };
+
+  const filteredFindings = useMemo(() => {
+    if (!workspace) return [];
+    if (findingFilter === "all") return workspace.findings;
+    if (findingFilter === "unresolved") return unresolvedFindings(workspace.findings);
+    return workspace.findings.filter((finding) => finding.severity === findingFilter);
+  }, [findingFilter, workspace]);
+
+  const loading = authStatus === "loading" || (!routeProblem && !workspace && !problem);
+  if (loading) return <LoadingState message="Opening academic proposal review…" />;
+  if (routeProblem) return <ErrorState title={problemTitle(routeProblem)} message={routeProblem.message} />;
+  if (problem && !workspace) return <ErrorState title={problemTitle(problem)} message={problem.message} />;
+  if (!workspace) return <ErrorState title="Review workspace unavailable" message="No authoritative review session was returned." />;
+
+  const { session, items, findings } = workspace;
+  const lifecycle = reviewLifecycle(session.status);
+  const counts = reviewCounts(session);
+  const completion = completionSummary(session, findings);
+  const workflow = mapGovernedWorkflow({
+    resourceExists: true,
+    processingStatus: "ready_for_review",
+    reviewStatus: session.status,
+    reviewBlockers: session.summary.blocking_findings,
+    hrefs: {
+      processing: `/dashboard/resources/${session.resource.id}`,
+      review: `/dashboard/academic-review/${session.proposal}`,
+      approval: `/dashboard/academic-review/${session.proposal}/governance?session=${session.id}`,
+    },
+  });
+
+  return (
+    <main className="space-y-6">
+      <header className={panel}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-[var(--color-primary)]">Academic proposal review</p>
+            <h1 className="mt-2 text-3xl font-semibold">{session.resource.title}</h1>
+            <p className="mt-2 text-sm text-[var(--color-muted-foreground)]">Source: {session.resource.source_label || "Not supplied"}</p>
+          </div>
+          <div className="flex gap-2">
+            <Link className={control} href={`/dashboard/resources/${session.resource.id}`}>Back to resource</Link>
+            <button className={control} disabled={busy} onClick={() => void refresh()} type="button">Refresh</button>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <p><strong>Status:</strong> {lifecycle.label}</p>
+          <p><strong>Review version:</strong> {session.version}</p>
+          <p><strong>Proposal version:</strong> {session.proposal_version}</p>
+          <p><strong>Confidence:</strong> {(session.confidence * 100).toFixed(1)}%</p>
+          <p><strong>Sections:</strong> {counts.sections.included} included, {counts.sections.excluded} excluded, {counts.sections.pending} pending</p>
+          <p><strong>Concepts:</strong> {counts.concepts.included} included, {counts.concepts.excluded} excluded, {counts.concepts.pending} pending</p>
+          <p><strong>Unresolved findings:</strong> {session.summary.outstanding_findings}</p>
+          <p><strong>Updated:</strong> {new Date(session.updated_at).toLocaleString()}</p>
+        </div>
+        <p className="mt-4 rounded-md border p-3 text-sm">{lifecycle.explanation}</p>
+      </header>
+
+      <GovernedWorkflowTimeline workflow={workflow} />
+
+      {problem ? (
+        <section aria-live="assertive" className="rounded-md border border-[var(--color-danger)] p-4">
+          <h2 className="font-semibold">{problemTitle(problem)}</h2>
+          <p className="mt-1 text-sm">{problem.message}</p>
+          {problem.fieldErrors ? <ul className="mt-2 list-disc pl-5 text-sm">{Object.entries(problem.fieldErrors).flatMap(([field, messages]) => messages.map((message) => <li key={`${field}-${message}`}>{field}: {message}</li>))}</ul> : null}
+          {problem.status === 409 ? <p className="mt-1 text-sm">Your local input has been preserved. Refresh deliberately before sending another command.</p> : null}
+        </section>
+      ) : null}
+      <p aria-live="polite" className="sr-only">{notice}</p>
+
+      {items.length === 0 ? <EmptyState title="Empty proposal" description="The backend returned no proposed sections or concepts for this review." /> : (
+        <div className="grid gap-6 lg:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.4fr)]">
+          <nav aria-label="Proposal items" className={panel}>
+            <h2 className="text-lg font-semibold">Proposal outline</h2>
+            <ul className="mt-4 max-h-[42rem] space-y-2 overflow-y-auto">
+              {orderedItems(items).map(({ item, backendOrder }) => (
+                <li key={item.id}>
+                  <button aria-current={item.id === selectedId ? "true" : undefined} className={`${control} w-full text-left ${item.id === selectedId ? "border-[var(--color-primary)]" : ""}`} onClick={() => choose(item)} type="button">
+                    <span className="block text-xs uppercase">{backendOrder}. {item.item_type} · {item.decision}</span>
+                    <span className="block font-medium">{item.edit?.title || item.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </nav>
+
+          <div className="space-y-6">
+            <section className={panel}>
+              {selected ? (
+                <ItemEditor
+                  busy={busy}
+                  editable={lifecycle.editable}
+                  item={selected}
+                  key={selected.id}
+                  onDirtyChange={setDirty}
+                  onSaveDecision={(decision, reason) => runCommand(() => decideItem(session.id, selected.id, decision, reason), `${selected.item_type} decision saved.`)}
+                  onSaveEdit={(payload) => runCommand(() => editItem(session.id, selected.id, payload), `${selected.item_type} edits saved.`)}
+                />
+              ) : <p>Select a proposal item.</p>}
+            </section>
+
+            <section aria-labelledby="evidence-title" className={panel}>
+              <h2 className="text-xl font-semibold" id="evidence-title">Source evidence</h2>
+              {!selected ? <p className="mt-2 text-sm">Select an item to inspect its evidence.</p> : evidence.length === 0 ? <p className="mt-2 text-sm">No source evidence was returned for this item.</p> : (
+                <div className="mt-4 space-y-3">
+                  {evidence.map((row) => (
+                    <details className="rounded-md border p-3" key={row.id}>
+                      <summary className="cursor-pointer text-sm font-medium">Pages {row.page_start ?? "unknown"}–{row.page_end ?? row.page_start ?? "unknown"} · {row.evidence_strength} · {(row.confidence * 100).toFixed(0)}%</summary>
+                      <p className="mt-2 text-sm"><strong>Hierarchy:</strong> {row.hierarchy || "Not supplied"}</p>
+                      <p className="mt-2 whitespace-pre-wrap break-words text-sm">{row.supporting_text || "No excerpt supplied."}</p>
+                      <p className="mt-2 text-xs text-[var(--color-muted-foreground)]">Evidence reference {row.id}</p>
+                    </details>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+      )}
+
+      <section aria-labelledby="findings-title" className={panel}>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div><h2 className="text-xl font-semibold" id="findings-title">Findings</h2><p className="mt-1 text-sm">Only the backend can mark a finding resolved.</p></div>
+          <label className="text-sm">Finding filter
+            <select className={`${control} ml-2`} onChange={(event) => setFindingFilter(event.target.value as typeof findingFilter)} value={findingFilter}>
+              <option value="unresolved">Unresolved only</option><option value="all">All findings</option><option value="blocking">Blockers</option><option value="warning">Warnings</option><option value="info">Information</option>
+            </select>
+          </label>
+        </div>
+        <ul className="mt-4 space-y-3">
+          {filteredFindings.map((finding) => (
+            <li className="rounded-md border p-4" key={finding.id}>
+              <p className="font-semibold">{severityLabel(finding.severity)} · {finding.resolved || finding.passed ? "Resolved" : "Unresolved"}</p>
+              <p className="mt-1 text-sm">{finding.message}</p>
+              {!finding.resolved && !finding.passed && lifecycle.editable ? (
+                <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                  <label className="text-sm" htmlFor={`finding-note-${finding.id}`}>Resolution note
+                    <input className={`${control} mt-1 w-full`} id={`finding-note-${finding.id}`} onChange={(event) => setResolutionNotes((current) => ({ ...current, [finding.id]: event.target.value }))} value={resolutionNotes[finding.id] ?? ""} />
+                  </label>
+                  <button className={`${control} self-end`} disabled={busy || !selected || !(resolutionNotes[finding.id] ?? "").trim()} onClick={() => {
+                    if (!selected) return;
+                    const resolution_type = selected.decision === "rejected" ? "rejection" : selected.decision === "moved" ? "move" : "edit";
+                    void runCommand(() => resolveFinding(session.id, { validation_id: finding.id, resolution_type, item_decision_id: selected.id, note: resolutionNotes[finding.id] }), "Finding resolution saved by the backend.");
+                  }} type="button">Resolve with selected item</button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className={panel}>
+        <h2 className="text-xl font-semibold">Complete review</h2>
+        <p className="mt-2 text-sm">Backend readiness: {session.summary.ready ? "completion allowed" : "completion blocked"}. The frontend does not recalculate this decision.</p>
+        {!completion.allowed ? <p className="mt-2 text-sm">Resolve all backend-reported pending items and blocking findings before completion.</p> : null}
+        <button aria-describedby="completion-explanation" className={`${control} mt-4`} disabled={busy || !completion.allowed || dirty} onClick={() => setShowCompletion(true)} type="button">Complete human review</button>
+        <p className="mt-2 text-xs" id="completion-explanation">Completion advances to ready for approval; it does not approve, reject, populate, synchronize, or evaluate teaching readiness.</p>
+        {session.status === "ready_for_approval" || session.status === "approved" || session.status === "approved_with_edits" || session.status === "rejected" ? (
+          <Link className={`${control} mt-4 inline-block`} href={`/dashboard/academic-review/${proposalId}/governance?session=${session.id}`}>Open approval and population governance</Link>
+        ) : null}
+      </section>
+
+      {showCompletion ? (
+        <CompletionDialog
+          busy={busy}
+          findings={findings}
+          onCancel={() => setShowCompletion(false)}
+          onConfirm={() => {
+            void runCommand(async () => {
+              const next = await submitReview(session.id);
+              if (next) setWorkspace((current) => current ? { ...current, session: next } : current);
+              setShowCompletion(false);
+            }, "Human review completed. This workspace is now read-only.");
+          }}
+          session={session}
+        />
+      ) : null}
+    </main>
+  );
 }

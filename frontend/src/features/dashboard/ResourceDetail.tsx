@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback";
 import { useAuth } from "@/features/auth/AuthProvider";
+import { GovernedWorkflowTimeline, mapGovernedWorkflow } from "@/features/governed-workflow";
 import {
   getLearningResource,
   getSubject,
@@ -27,6 +28,17 @@ import {
   type ContentImportJob,
 } from "@/services/content-intelligence";
 import { listConceptBrowserStates, startOrResumeConcept, type ConceptBrowserStatus } from "@/services/learning";
+import { contentProcessingApi } from "@/features/content-processing/api";
+import {
+  canonicalStatusLabel,
+  canonicalWorkflowStatus,
+  isCanonicalProcessingActive,
+  isCanonicalProcessingFailed,
+  isCanonicalProcessingTerminal,
+  PROCESSING_POLL_INTERVAL_MS,
+} from "@/features/content-processing/processingState";
+import { toProcessingJobId, type ProcessingJob } from "@/features/content-processing/types";
+import { pollOperation } from "@/lib/polling";
 
 type ResourceDetailProps = {
   resourceId: string;
@@ -93,6 +105,8 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
   const [concepts, setConcepts] = useState<ContentConcept[]>([]);
   const [conceptStates, setConceptStates] = useState<Record<string, ConceptBrowserStatus>>({});
   const [importJob, setImportJob] = useState<ContentImportJob | null>(null);
+  const [processingJob, setProcessingJob] = useState<ProcessingJob | null>(null);
+  const processingControllerRef = useRef<AbortController | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [startingConceptId, setStartingConceptId] = useState<string | null>(null);
@@ -144,6 +158,47 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
       isMounted = false;
     };
   }, [resourceId]);
+
+  useEffect(() => {
+    processingControllerRef.current?.abort();
+    const controller = new AbortController();
+    processingControllerRef.current = controller;
+    async function synchronizeProcessing() {
+      try {
+        const linkedId = importJob?.processing_job_id
+          ? toProcessingJobId(importJob.processing_job_id)
+          : null;
+        const initial = linkedId
+          ? await contentProcessingApi.get(linkedId, controller.signal)
+          : (await contentProcessingApi.listForResource(resourceId, controller.signal))?.[0] ?? null;
+        if (controller.signal.aborted) return;
+        if (!initial) {
+          setProcessingJob(null);
+          return;
+        }
+        setProcessingJob(initial);
+        if (!isCanonicalProcessingActive(initial)) return;
+        await pollOperation({
+          signal: controller.signal,
+          intervalMs: PROCESSING_POLL_INTERVAL_MS,
+          request: async (signal) => {
+            const next = await contentProcessingApi.get(initial.processing_job_id, signal);
+            if (!next) throw new Error("Canonical processing status returned no response body.");
+            return next;
+          },
+          isSuccess: isCanonicalProcessingTerminal,
+          isFailure: isCanonicalProcessingFailed,
+          onValue: setProcessingJob,
+        });
+      } catch (processingError) {
+        if (!(processingError instanceof DOMException && processingError.name === "AbortError")) {
+          setError(processingError instanceof Error ? processingError.message : "Unable to load processing status.");
+        }
+      }
+    }
+    void synchronizeProcessing();
+    return () => controller.abort();
+  }, [importJob?.processing_job_id, resourceId]);
 
   const conceptsBySection = useMemo(() => {
     const grouped = new Map<string, ContentConcept[]>();
@@ -220,8 +275,8 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
   }
 
   const lowConfidence = isLowConfidenceImport(importJob);
-  const authoritativeStatus = authoritativeProcessingStatus(importJob);
-  const reviewRequired = isReviewRequired(importJob);
+  const authoritativeStatus = processingJob ? canonicalWorkflowStatus(processingJob) : authoritativeProcessingStatus(importJob);
+  const reviewRequired = processingJob ? processingJob.review_required : isReviewRequired(importJob);
   const reviewRoles = new Set(user?.institutions?.map((membership) => membership.role) ?? []);
   const canOpenAcademicReview = Boolean(
     user?.is_superuser ||
@@ -231,9 +286,20 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
       reviewRoles.has("institution_owner") ||
       reviewRoles.has("system_administrator"),
   );
-  const activelyProcessing = isActivelyProcessing(importJob);
-  const processingFailed = isProcessingFailed(importJob);
-  const readyForLearning = isReadyForTeaching(importJob) || (!authoritativeStatus && Boolean(resource.resource_ready_for_learning || importJob?.resource_ready_for_learning));
+  const activelyProcessing = processingJob ? isCanonicalProcessingActive(processingJob) : isActivelyProcessing(importJob);
+  const processingFailed = processingJob ? isCanonicalProcessingFailed(processingJob) : isProcessingFailed(importJob);
+  const readyForLearning = processingJob
+    ? processingJob.ready_for_teaching
+    : isReadyForTeaching(importJob) || (!authoritativeStatus && Boolean(resource.resource_ready_for_learning || importJob?.resource_ready_for_learning));
+  const workflow = mapGovernedWorkflow({
+    resourceExists: true,
+    processingStatus: authoritativeStatus,
+    hrefs: {
+      upload: subject ? `/dashboard/subjects/${subject.id}` : "/dashboard",
+      processing: `/dashboard/resources/${resource.id}`,
+      ...(importJob?.proposal?.id ? { review: `/dashboard/academic-review/${importJob.proposal.id}` } : {}),
+    },
+  });
 
   return (
     <section className="space-y-8">
@@ -252,6 +318,8 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
         <span>/</span>
         <span className="text-[var(--color-foreground)]">{resource.title}</span>
       </div>
+
+      <GovernedWorkflowTimeline compact workflow={workflow} />
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr,0.8fr]">
         <section className={`${panelClassName} space-y-4`}>
@@ -276,7 +344,7 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
             </div>
             <div>
               <dt className="font-medium text-[var(--color-foreground)]">Import status</dt>
-              <dd className="mt-1">{processingStatusLabel(importJob)}</dd>
+              <dd className="mt-1">{processingJob ? canonicalStatusLabel(processingJob) : processingStatusLabel(importJob)}</dd>
             </div>
           </dl>
 
@@ -284,7 +352,7 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
             <div className="rounded-[var(--radius-md)] border border-[var(--color-primary)]/50 p-4">
               <h2 className="text-lg font-semibold text-[var(--color-foreground)]">Ready for review</h2>
               <p className="mt-2 text-sm text-[var(--color-muted-foreground)]">
-                Document processing is complete. Academic review is required before sections and concepts are published.
+                Document processing is complete. Academic review is required before sections and concepts become official Academic content.
               </p>
               {importJob?.proposal ? (
                 <dl className="mt-4 grid gap-3 text-sm text-[var(--color-muted-foreground)] sm:grid-cols-3">
@@ -294,7 +362,7 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
                 </dl>
               ) : null}
               <p className="mt-4 text-sm text-[var(--color-muted-foreground)]">
-                No academic sections or concepts have been published yet.
+                No official Academic sections or concepts exist yet.
               </p>
               {canOpenAcademicReview && importJob?.proposal?.id ? (
                 <Link className="mt-4 inline-flex min-h-10 items-center rounded-[var(--radius-md)] border border-[var(--color-primary)] px-4 text-sm font-medium text-[var(--color-primary)]" href={`/dashboard/academic-review/${importJob.proposal.id}`}>
@@ -465,7 +533,7 @@ export function ResourceDetail({ resourceId }: ResourceDetailProps) {
             title={reviewRequired ? "Academic review required" : "Resource not ready for learning yet"}
             description={
               reviewRequired
-                ? "Processing is complete, but no academic sections or concepts have been published. Study access will remain unavailable until an authorized review is completed."
+                ? "Processing is complete, but no official Academic sections or concepts exist. Study access remains unavailable until governed review and downstream readiness complete."
                 : processingFailed
                 ? "This upload failed before a learning-ready outline could be created. Return to the subject page to retry or delete it."
                 : activelyProcessing

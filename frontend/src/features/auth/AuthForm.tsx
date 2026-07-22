@@ -61,10 +61,6 @@ export function AuthForm({ mode }: AuthFormProps) {
     }
   }
 
-  if (status === "loading" && pending === false) {
-    return <LoadingState message="Checking your session..." />;
-  }
-
   return (
     <section className="mx-auto w-full max-w-md space-y-6">
       <div className="space-y-2 text-center">
@@ -84,6 +80,10 @@ export function AuthForm({ mode }: AuthFormProps) {
           message={formError || error || undefined}
         />
       )}
+
+      {status === "loading" && pending === false ? (
+        <LoadingState message="Checking your session..." />
+      ) : null}
 
       <form className={cardClassName} onSubmit={(event) => void handleSubmit(event)}>
         <div className="space-y-5">
