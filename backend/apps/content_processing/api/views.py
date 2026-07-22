@@ -7,13 +7,14 @@ from apps.content_processing.api.serializers import (
     ContentProcessingJobSerializer,
     ProcessingAttemptSerializer,
     ProcessingDiagnosticSerializer,
+    TeachingReadinessEvaluationSerializer,
 )
 from apps.content_processing.application import (
     CancelContentProcessingJobService,
     RetryContentProcessingJobService,
 )
 from apps.content_processing.domain.exceptions import ProcessingLifecycleError
-from apps.content_processing.models import ContentProcessingJob
+from apps.content_processing.models import ContentProcessingJob, TeachingReadinessEvaluation
 from apps.users.domain.models import InstitutionMembership
 
 
@@ -28,7 +29,11 @@ class ContentProcessingJobViewSet(viewsets.ReadOnlyModelViewSet):
         )
         if not institution_ids:
             return queryset.none()
-        return queryset.filter(resource__subject__institution_id__in=institution_ids)
+        queryset = queryset.filter(resource__subject__institution_id__in=institution_ids)
+        resource_id = self.request.query_params.get("resource")
+        if resource_id:
+            queryset = queryset.filter(resource_id=resource_id)
+        return queryset
 
     @action(detail=True, methods=["get"], url_path="attempts")
     def attempts(self, request, pk=None):
@@ -55,3 +60,16 @@ class ContentProcessingJobViewSet(viewsets.ReadOnlyModelViewSet):
         except ProcessingLifecycleError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         return Response(ContentProcessingJobSerializer(job).data, status=status.HTTP_200_OK)
+
+
+class TeachingReadinessEvaluationViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = TeachingReadinessEvaluationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        institution_ids = InstitutionMembership.objects.filter(
+            user=self.request.user, is_active=True
+        ).values_list("institution_id", flat=True)
+        return TeachingReadinessEvaluation.objects.filter(
+            resource__subject__institution_id__in=institution_ids
+        ).order_by("-evaluated_at")

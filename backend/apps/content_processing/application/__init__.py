@@ -9,6 +9,11 @@ from .services import (
     RecordProcessingDiagnosticService,
     RetryContentProcessingJobService,
 )
+from .teaching_readiness_services import (
+    AssembleTeachingReadinessSnapshotService,
+    EvaluateTeachingReadinessService,
+    InvalidateTeachingReadinessService,
+)
 
 __all__ = [
     "CreateContentProcessingJobService",
@@ -20,5 +25,7 @@ __all__ = [
     "MarkContentReadyForReviewService",
     "MarkContentReadyForTeachingService",
     "OrchestrateContentProcessingStageService",
+    "AssembleTeachingReadinessSnapshotService",
+    "EvaluateTeachingReadinessService",
+    "InvalidateTeachingReadinessService",
 ]
-

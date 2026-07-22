@@ -1,6 +1,8 @@
 from django.contrib import admin
 from django.test import SimpleTestCase
 from rest_framework.permissions import IsAuthenticated
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from apps.content_processing.api.views import ContentProcessingJobViewSet
 from apps.content_processing.models import (
@@ -21,6 +23,25 @@ class ContentProcessingApiAdminEventTests(SimpleTestCase):
         self.assertTrue(hasattr(ContentProcessingJobViewSet, "diagnostics"))
         self.assertTrue(hasattr(ContentProcessingJobViewSet, "retry"))
         self.assertTrue(hasattr(ContentProcessingJobViewSet, "cancel"))
+
+    def test_job_list_can_resolve_canonical_processing_by_resource(self):
+        view = ContentProcessingJobViewSet()
+        view.request = SimpleNamespace(
+            user=SimpleNamespace(id="user-1"),
+            query_params={"resource": "resource-1"},
+        )
+        scoped_queryset = MagicMock()
+        resource_queryset = MagicMock()
+        with (
+            patch("apps.content_processing.api.views.ContentProcessingJob.objects") as jobs,
+            patch("apps.content_processing.api.views.InstitutionMembership.objects") as memberships,
+        ):
+            jobs.select_related.return_value.order_by.return_value.filter.return_value = scoped_queryset
+            scoped_queryset.filter.return_value = resource_queryset
+            memberships.filter.return_value.values_list.return_value = ["institution-1"]
+            result = view.get_queryset()
+        scoped_queryset.filter.assert_called_once_with(resource_id="resource-1")
+        self.assertIs(result, resource_queryset)
 
     def test_admin_registration_exists(self):
         for model in [ContentProcessingJob, ProcessingAttempt, ProcessingDiagnostic, ProcessingStageResult]:

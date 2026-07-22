@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from apps.content_processing.models import AcademicImportProposal, AcademicPopulationJob, ContentProcessingJob, DocumentExtraction, DocumentHierarchy, DocumentHierarchyNode, DocumentSegmentation, ExtractedBlock, HierarchyBlockClassification, ProcessingAttempt, ProcessingDiagnostic, ProcessingStageResult, ProposalDecision, ProposalEvidence, ProposalRevision, ProposalValidation, ProposedConcept, ProposedSection, SemanticSegment, SourceDocumentProfile
+from apps.content_processing.models import AcademicImportProposal, AcademicPopulationJob, ContentProcessingJob, DocumentExtraction, DocumentHierarchy, DocumentHierarchyNode, DocumentSegmentation, ExtractedBlock, HierarchyBlockClassification, ProcessingAttempt, ProcessingDiagnostic, ProcessingStageResult, ProposalDecision, ProposalEvidence, ProposalRevision, ProposalValidation, ProposedConcept, ProposedSection, SemanticSegment, SourceDocumentProfile, TeachingReadinessEvaluation
 
 
 @admin.register(ContentProcessingJob)
@@ -9,6 +9,18 @@ class ContentProcessingJobAdmin(admin.ModelAdmin):
     list_filter = ("status", "current_stage", "pipeline_version")
     search_fields = ("id", "resource__title", "stored_file__original_filename")
     readonly_fields = ("id", "created_at", "updated_at", "queued_at", "started_at", "completed_at", "last_transition_at", "transition_version", "failure")
+
+
+@admin.register(TeachingReadinessEvaluation)
+class TeachingReadinessEvaluationAdmin(admin.ModelAdmin):
+    list_display = ("id", "resource", "decision", "policy_version", "blocker_count", "warning_count", "trigger", "evaluated_at", "invalidated_at")
+    list_filter = ("decision", "policy_version", "trigger", "evaluated_at", "invalidated_at")
+    search_fields = ("id", "resource__id", "processing_job__id", "approved_projection_id", "academic_population_run_id", "retrieval_synchronization_run_id", "retrieval_generation_id", "lineage_fingerprint")
+    readonly_fields = tuple(field.name for field in TeachingReadinessEvaluation._meta.fields)
+
+    def has_add_permission(self, request): return False
+    def has_change_permission(self, request, obj=None): return False
+    def has_delete_permission(self, request, obj=None): return False
 
 
 @admin.register(ProcessingAttempt)

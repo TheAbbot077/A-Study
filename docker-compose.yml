@@ -77,6 +77,10 @@ services:
       - abbot_study_frontend_next:/app/.next
     env_file:
       - .env.example
+    environment:
+      # Next's webpack watcher needs polling to observe host edits reliably
+      # through Docker Desktop's Windows bind mount.
+      WATCHPACK_POLLING: "true"
     working_dir: /app
     ports:
       - "3000:3000"

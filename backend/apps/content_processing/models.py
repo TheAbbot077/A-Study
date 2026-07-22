@@ -24,6 +24,7 @@ from apps.content_processing.domain.proposal import (
     AcademicImportProposal, AcademicPopulationJob, ProposalDecision, ProposalEvidence, ProposalRevision,
     ProposalValidation, ProposedConcept, ProposedSection,
 )
+from apps.content_processing.infrastructure.persistence.teaching_readiness_models import TeachingReadinessEvaluation
 
 __all__ = [
     "ContentProcessingJob",
@@ -44,4 +45,5 @@ __all__ = [
     "DocumentSegmentation", "SemanticSegment", "SemanticSegmentBlock",
     "AcademicImportProposal", "ProposedSection", "ProposedConcept", "ProposalEvidence",
     "ProposalValidation", "ProposalDecision", "ProposalRevision", "AcademicPopulationJob",
+    "TeachingReadinessEvaluation",
 ]

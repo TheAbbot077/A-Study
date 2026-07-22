@@ -462,3 +462,25 @@ PI-6D.2 hardens the approval boundary with durable readiness snapshots, versione
 PI-6D.3 adds controlled, replay-safe population of immutable approved projections into official Academic Platform sections and concepts. It remains distinct from retrieval synchronization and teaching readiness.
 
 PI-6D.4 implementation is pending manual validation. It reconciles successful PI-6D.3 population mappings with official Academic content and source evidence, builds deterministic candidate retrieval generations, and atomically promotes only fully indexed generations with complete citations. It ends at `SYNCHRONIZED`; teaching readiness and frontend alignment remain deferred.
+
+PI-6D.5 implementation is pending manual validation. It adds the sole authoritative, versioned teaching-readiness evaluation gate, immutable lineage evidence, structured blocker checks, replay protection, readiness invalidation, audit/events, and closes direct indexing-to-teaching bypasses. Frontend alignment remains deferred.
+
+### PI-6E.1 — Frontend Contract Foundation
+
+Implementation is awaiting manual validation. PI-6E.1 restores strict frontend validation patterns, models the PI-6D transport contracts, and adds shared error, idempotency, and safe-polling foundations. Operational governance screens remain deferred to PI-6E.2 and later phases.
+
+### PI-6E.2 — Academic Proposal Review Workspace
+
+Implementation is awaiting manual validation. The existing reviewer route now presents the PI-6D.1 human-review lifecycle, ordered proposal items, immutable source evidence, findings, supported item decisions and edits, finding resolution, and backend-authorized review completion. The workspace ends at `ready_for_approval`; approval, rejection at the approval boundary, population, retrieval synchronization, and teaching-readiness evaluation are excluded.
+
+### PI-6E.3 — Approval and Academic Population Operations
+
+Implementation is awaiting manual validation. A separate governance route now evaluates backend approval readiness, submits replay-safe approval or rejection decisions, displays immutable approved projections, evaluates backend population readiness, and submits controlled Academic population. It ends at `populated`; retrieval synchronization and teaching-readiness evaluation remain excluded.
+
+### PI-6E.4 — Retrieval and Teaching-Readiness Operations
+
+Implementation is awaiting manual validation. The protected governance route now continues from authoritative Academic population through backend-controlled retrieval synchronization and the separate teaching-readiness evaluation gate. It renders synchronized generation metrics and READY, BLOCKED, or STALE evaluation truth without calculating readiness, promoting generations, publishing learner content, or invoking tutor behavior.
+
+### PI-6E.5 — Governed Workflow Integration and UX Hardening
+
+Implementation is awaiting manual validation. Resource, review, and governance surfaces now share one presentation-only governed workflow timeline and qualified status vocabulary across upload, processing, review, approval, population, retrieval, and teaching readiness. No new backend authority or automatic mutation chaining was introduced. The user may mark PI-6E complete after manual validation.

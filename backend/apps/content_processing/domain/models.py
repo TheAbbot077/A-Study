@@ -298,9 +298,11 @@ class ContentProcessingJob(models.Model):
         self.last_transition_at = timezone.now()
         self.transition_version += 1
 
-    def mark_ready_for_teaching(self) -> None:
+    def grant_teaching_readiness(self, evaluation_id: str) -> None:
         if self.status != JobStatus.READY_FOR_REVIEW:
             raise ProcessingLifecycleError("Content must be ready for review before teaching readiness can be marked.")
+        if not (evaluation_id or "").strip():
+            raise ProcessingLifecycleError("A successful teaching-readiness evaluation is required.")
         self.status = JobStatus.READY_FOR_TEACHING
         self.progress = 100
         self.completed_at = timezone.now()

@@ -204,6 +204,53 @@ class LearningResourceViewSet(viewsets.ModelViewSet):
         resource = LearningResourceService().archive_resource(self.get_object())
         return Response(self.get_serializer(resource).data)
 
+    @action(detail=True, methods=["get"], url_path="teaching-readiness")
+    def teaching_readiness(self, request, pk=None):
+        from apps.content_processing.models import TeachingReadinessEvaluation
+
+        resource = self.get_object()
+        evaluation = TeachingReadinessEvaluation.objects.filter(resource=resource).order_by("-evaluated_at").first()
+        if evaluation is None:
+            return Response({
+                "resource_id": str(resource.id), "status": "not_ready",
+                "latest_evaluation_id": None, "decision": None, "blockers": [], "warnings": [],
+                "can_evaluate": bool(request.user.is_staff), "can_reevaluate": False,
+            })
+        blockers = [item for item in evaluation.checks if not item["passed"] and item["severity"] == "blocker"]
+        warnings = [item for item in evaluation.checks if not item["passed"] and item["severity"] == "warning"]
+        return Response({
+            "resource_id": str(resource.id),
+            "status": "stale" if evaluation.invalidated_at else ("ready_for_teaching" if evaluation.decision == "ready" else "not_ready"),
+            "latest_evaluation_id": str(evaluation.id), "decision": evaluation.decision,
+            "lineage_fingerprint": evaluation.lineage_fingerprint, "policy_version": evaluation.policy_version,
+            "checks_passed": evaluation.checks_passed, "checks_failed": evaluation.checks_failed,
+            "blocker_count": evaluation.blocker_count, "warning_count": evaluation.warning_count,
+            "blockers": blockers, "warnings": warnings, "can_evaluate": bool(request.user.is_staff),
+            "can_reevaluate": bool(request.user.is_staff),
+        })
+
+    @action(detail=True, methods=["post"], url_path="teaching-readiness/evaluate")
+    def evaluate_teaching_readiness(self, request, pk=None):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from apps.content_processing.api.serializers import TeachingReadinessEvaluationSerializer
+        from apps.content_processing.application.teaching_readiness_services import EvaluateTeachingReadinessService
+
+        resource = self.get_object()
+        try:
+            evaluation, replayed = EvaluateTeachingReadinessService().execute(
+                resource_id=resource.id, idempotency_key=request.data.get("idempotency_key", ""),
+                expected_lineage_fingerprint=request.data.get("expected_lineage_fingerprint", ""),
+                reason=request.data.get("reason", ""), actor=request.user,
+            )
+        except DjangoValidationError as exc:
+            details = getattr(exc, "messages", [str(exc)])
+            code = status.HTTP_409_CONFLICT if any("CONFLICT" in item for item in details) else status.HTTP_422_UNPROCESSABLE_ENTITY
+            return Response({"errors": details}, status=code)
+        return Response(
+            TeachingReadinessEvaluationSerializer(evaluation).data,
+            status=status.HTTP_200_OK if replayed else status.HTTP_201_CREATED,
+        )
+
 
 class ContentSectionViewSet(viewsets.ModelViewSet):
     serializer_class = ContentSectionSerializer

@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "apps.content_processing.apps.ContentProcessingConfig",
     "apps.academic_review.apps.AcademicReviewConfig",
     "apps.retrieval.apps.RetrievalConfig",
+    "apps.self_study.apps.SelfStudyConfig",
 ]
 
 MIDDLEWARE = [

@@ -30,4 +30,7 @@ urlpatterns = [
     path('api/content-processing/', include('apps.content_processing.api.urls')),
     path('api/academic-review/', include('apps.academic_review.api.urls')),
     path('api/retrieval/', include('apps.retrieval.api.urls')),
+    path('api/self-study/', include('apps.self_study.api.urls')),
+    path('api/curricula/', include('apps.self_study.api.public_curriculum_urls')),
+    path('api/curriculum-registry/', include('apps.self_study.api.curriculum_urls')),
 ]

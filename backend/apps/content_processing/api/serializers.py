@@ -6,6 +6,7 @@ from apps.content_processing.models import (
     JobStatus,
     ProcessingAttempt,
     ProcessingDiagnostic,
+    TeachingReadinessEvaluation,
 )
 
 
@@ -40,6 +41,23 @@ class ProcessingDiagnosticSerializer(serializers.ModelSerializer):
             "source_component",
             "created_at",
         ]
+
+
+class TeachingReadinessEvaluationSerializer(serializers.ModelSerializer):
+    resource_id = serializers.UUIDField(read_only=True)
+    subject_id = serializers.UUIDField(read_only=True)
+    processing_job_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = TeachingReadinessEvaluation
+        fields = (
+            "id", "resource_id", "subject_id", "processing_job_id", "processing_attempt_id",
+            "approved_projection_id", "approval_decision_id", "academic_population_run_id",
+            "retrieval_synchronization_run_id", "retrieval_generation_id", "trigger", "reason",
+            "lineage_fingerprint", "policy_version", "decision", "checks_passed", "checks_failed",
+            "blocker_count", "warning_count", "snapshot", "checks", "invalidation_reason",
+            "invalidated_at", "supersedes_evaluation_id", "evaluated_at",
+        )
 
 
 class ContentProcessingJobSerializer(serializers.ModelSerializer):

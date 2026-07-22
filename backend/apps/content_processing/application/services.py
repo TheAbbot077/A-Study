@@ -591,10 +591,9 @@ class MarkContentReadyForTeachingService:
         self.event_publisher = event_publisher or EventPublisher()
 
     def mark(self, job: ContentProcessingJob) -> ContentProcessingJob:
-        job.mark_ready_for_teaching()
-        job = self.job_repository.save(job)
-        self.event_publisher.publish(BusinessEvent.create("content_processing.ready_for_teaching", payload={"job_id": str(job.id)}))
-        return job
+        raise ProcessingLifecycleError(
+            "Teaching readiness may only be granted by EvaluateTeachingReadinessService."
+        )
 
 
 class OrchestrateContentProcessingStageService:
@@ -702,8 +701,6 @@ class OrchestrateContentProcessingStageService:
                 )
                 if result.next_stage is None:
                     job.mark_ready_for_review()
-                    if result.terminal_status == JobStatus.READY_FOR_TEACHING:
-                        job.mark_ready_for_teaching()
                     attempt.status = AttemptStatus.SUCCEEDED
                     attempt.completed_at = timezone.now()
                     self.attempt_repository.save(attempt)
@@ -715,10 +712,7 @@ class OrchestrateContentProcessingStageService:
                             payload={"job_id": str(job.id), "attempt_id": str(attempt.id), "stage": expected_stage, "progress": job.progress},
                         )
                     )
-                    if job.status == JobStatus.READY_FOR_TEACHING:
-                        self.event_publisher.publish(BusinessEvent.create("content_processing.ready_for_teaching", payload={"job_id": str(job.id)}))
-                    else:
-                        self.event_publisher.publish(BusinessEvent.create("content_processing.ready_for_review", payload={"job_id": str(job.id)}))
+                    self.event_publisher.publish(BusinessEvent.create("content_processing.ready_for_review", payload={"job_id": str(job.id)}))
                     return job
 
                 job.complete_stage(expected_stage, result.next_stage, attempt.attempt_number)

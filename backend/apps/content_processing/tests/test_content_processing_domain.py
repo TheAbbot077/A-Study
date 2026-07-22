@@ -66,11 +66,10 @@ class ContentProcessingJobDomainTests(SimpleTestCase):
         job = ContentProcessingJob(active_attempt_number=1)
 
         with self.assertRaises(ProcessingLifecycleError):
-            job.mark_ready_for_teaching()
+            job.grant_teaching_readiness("evaluation-1")
 
         job.mark_ready_for_review()
-        job.mark_ready_for_teaching()
+        job.grant_teaching_readiness("evaluation-1")
 
         self.assertEqual(job.status, JobStatus.READY_FOR_TEACHING)
         self.assertEqual(job.progress, 100)
-

@@ -116,5 +116,5 @@ class IndexAcademicPopulationProcessor:
         return ProcessingStageExecutionResult(
             ProcessingStage.INDEXING, None, ContentProcessingJob.STAGE_PROGRESS[ProcessingStage.INDEXING], (),
             {"retrieval_index_job_id": str(index_job.id), "retrieval_collection_id": str(index_job.collection_id), "indexed_count": index_job.indexed_count, "retrieval_readiness": index_job.status},
-            index_job.checksum, terminal_status=JobStatus.READY_FOR_TEACHING,
+            index_job.checksum, terminal_status=JobStatus.READY_FOR_REVIEW,
         )
