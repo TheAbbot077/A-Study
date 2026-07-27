@@ -30,7 +30,28 @@ type AuthContextValue = {
   clearError: () => void;
 };
 
+const AUTH_USER_CACHE_KEY = "abbot-study.auth.user";
+
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function readCachedUser(): AuthUser | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(AUTH_USER_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as AuthUser) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedUser(user: AuthUser | null) {
+  if (typeof window === "undefined") return;
+  if (user) {
+    window.sessionStorage.setItem(AUTH_USER_CACHE_KEY, JSON.stringify(user));
+  } else {
+    window.sessionStorage.removeItem(AUTH_USER_CACHE_KEY);
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -42,11 +63,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
       setStatus(currentUser ? "authenticated" : "unauthenticated");
+      writeCachedUser(currentUser);
       setError(null);
       return currentUser;
     } catch (refreshError) {
       setUser(null);
       setStatus("unauthenticated");
+      writeCachedUser(null);
       setError(refreshError instanceof Error ? refreshError.message : "Unable to load your session.");
       return null;
     }
@@ -55,16 +78,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
     async function restoreSession() {
+      const cachedUser = readCachedUser();
+      if (cachedUser) {
+        setUser(cachedUser);
+        setStatus("authenticated");
+      }
+
       try {
         const currentUser = await getCurrentUser();
         if (!active) return;
         setUser(currentUser);
         setStatus(currentUser ? "authenticated" : "unauthenticated");
+        writeCachedUser(currentUser);
         setError(null);
       } catch (restoreError) {
         if (!active) return;
         setUser(null);
         setStatus("unauthenticated");
+        writeCachedUser(null);
         setError(restoreError instanceof Error ? restoreError.message : "Unable to load your session.");
       }
     }
@@ -76,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const authenticatedUser = await loginRequest(payload);
     setUser(authenticatedUser);
     setStatus("authenticated");
+    writeCachedUser(authenticatedUser);
     setError(null);
     return authenticatedUser;
   }, []);
@@ -85,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const authenticatedUser = await signupRequest(payload);
       setUser(authenticatedUser);
       setStatus("authenticated");
+      writeCachedUser(authenticatedUser);
       setError(null);
       return authenticatedUser;
     },
@@ -95,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await logoutRequest();
     setUser(null);
     setStatus("unauthenticated");
+    writeCachedUser(null);
     setError(null);
   }, []);
 

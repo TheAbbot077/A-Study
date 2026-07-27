@@ -5,8 +5,16 @@ import {
   diagnosticProgressLabel,
   planReadinessLabel,
 } from "../../src/features/self-study/experienceViewModel";
+import {
+  canSubmitLearnerMessage,
+  studioProgressLabel,
+  studioStatusTitle,
+  turnActionLabel,
+  turnAuthorLabel,
+} from "../../src/features/self-study/learningStudioViewModel";
+import { candidateSubtitle, normalLearnerPromptContainsRawSubjectId, onboardingStageTitle } from "../../src/features/self-study/onboardingViewModel";
 import { hasBlockingOnboarding, materialStatusSummary, nextActionTone, workspaceStatusLabel } from "../../src/features/self-study/workspaceViewModel";
-import type { SelfStudyDiagnosticExperience, SelfStudyNextAction, SelfStudyOnboardingSummary, SelfStudyPlanExperience, WorkspaceMaterial } from "../../src/services/self-study";
+import type { CurriculumCandidate, LearningStudioExperience, LearningStudioTurn, SelfStudyDiagnosticExperience, SelfStudyNextAction, SelfStudyOnboardingSession, SelfStudyOnboardingSummary, SelfStudyPlanExperience, WorkspaceMaterial } from "../../src/services/self-study";
 
 test("workspace labels keep learner copy distinct from backend enum values", () => {
   expect(workspaceStatusLabel("INTENT_REQUIRED")).toBe("Intent Required");
@@ -64,6 +72,36 @@ test("onboarding blocker detection reads backend blocker codes", () => {
   expect(hasBlockingOnboarding(null)).toBe(false);
 });
 
+test("conversational onboarding labels are stage-based and avoid raw subject-id prompts", () => {
+  const session = {
+    status: "AWAITING_CURRICULUM_SELECTION",
+    current_stage: "CURRICULUM_SELECTION",
+  } as SelfStudyOnboardingSession;
+  const candidate = {
+    authority: "Cambridge International",
+    level: "A Level",
+    jurisdiction: "International",
+  } as CurriculumCandidate;
+
+  expect(onboardingStageTitle(null)).toBe("Start onboarding");
+  expect(onboardingStageTitle(session)).toBe("Choose a governed curriculum");
+  expect(candidateSubtitle(candidate)).toBe("Cambridge International · A Level · International");
+  expect(normalLearnerPromptContainsRawSubjectId("Paste subject UUID")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("Subject ID")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("subject_id")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("subject-id")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("Governed subject ID")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("subject_uuid")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("subject-uuid")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("Enter the subject identifier")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("Academic subject identifier")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("Academic subject ID")).toBe(true);
+  expect(normalLearnerPromptContainsRawSubjectId("What would you like to study?")).toBe(false);
+  expect(normalLearnerPromptContainsRawSubjectId("Which subject are you studying?")).toBe(false);
+  expect(normalLearnerPromptContainsRawSubjectId("Choose a governed curriculum")).toBe(false);
+  expect(normalLearnerPromptContainsRawSubjectId("Tell us your study topic")).toBe(false);
+});
+
 test("diagnostic experience copy avoids mastery language while preserving progress", () => {
   const experience: SelfStudyDiagnosticExperience = {
     workspace_id: "workspace-1",
@@ -115,4 +153,82 @@ test("study plan readiness label fails closed until teaching preparation permits
 
   expect(planReadinessLabel(basePlan)).toBe("Your study plan is being prepared");
   expect(planReadinessLabel({ ...basePlan, can_start_learning: true, blocker_codes: [] })).toBe("Start learning with Abbot");
+});
+
+test("learning studio copy avoids mastery language and preserves concept-check handoff", () => {
+  const experience: LearningStudioExperience = {
+    workspace_id: "workspace-1",
+    teaching_session_id: "session-1",
+    session_version: 3,
+    bridge_plan_id: "plan-1",
+    current_plan_node_id: "node-1",
+    current_curriculum_node_id: "curriculum-node-1",
+    session_status: "NODE_COMPLETE",
+    node_status: "NODE_COMPLETE",
+    can_start: false,
+    can_resume: false,
+    can_send_message: false,
+    can_pause: false,
+    can_request_recap: false,
+    can_advance: true,
+    can_start_concept_check: true,
+    progress_summary: {
+      completed_teaching_segments: 1,
+      total_teaching_segments: 3,
+      current_index: 1,
+      concept_check_ready: true,
+      next_label: "Ready for concept check",
+    },
+    blocker_codes: [],
+    next_action: "concept_check",
+  };
+
+  expect(studioStatusTitle(experience)).toBe("Ready for concept check");
+  expect(studioProgressLabel(experience)).toBe("1 of 3 teaching segments completed.");
+  expect(studioStatusTitle(experience).toLowerCase()).not.toContain("master");
+});
+
+test("learning studio turn helpers keep Abbot and learner roles explicit", () => {
+  const turn: LearningStudioTurn = {
+    turn_id: "turn-1",
+    role: "ABBOT",
+    action_type: "CHECK_UNDERSTANDING",
+    status: "READY",
+    content: "What would you try next?",
+    created_at: "2026-07-22T00:00:00Z",
+    citations: [],
+    rationale_codes: [],
+    requires_response: true,
+    safe_transition: "awaiting_learner",
+  };
+
+  expect(turnAuthorLabel(turn)).toBe("Abbot");
+  expect(turnActionLabel(turn.action_type)).toBe("Check Understanding");
+});
+
+test("learning studio send button is governed by backend state and pending state", () => {
+  const experience: LearningStudioExperience = {
+    workspace_id: "workspace-1",
+    teaching_session_id: "session-1",
+    session_version: 3,
+    bridge_plan_id: "plan-1",
+    current_plan_node_id: "node-1",
+    current_curriculum_node_id: "curriculum-node-1",
+    session_status: "AWAITING_LEARNER",
+    node_status: "ACTIVE",
+    can_start: false,
+    can_resume: false,
+    can_send_message: true,
+    can_pause: true,
+    can_request_recap: true,
+    can_advance: false,
+    can_start_concept_check: false,
+    progress_summary: { completed_teaching_segments: 0, total_teaching_segments: 3, current_index: 1, concept_check_ready: false },
+    blocker_codes: [],
+    next_action: "send_response",
+  };
+
+  expect(canSubmitLearnerMessage(experience, false, "I think the answer is...")).toBe(true);
+  expect(canSubmitLearnerMessage(experience, true, "I think the answer is...")).toBe(false);
+  expect(canSubmitLearnerMessage(experience, false, "   ")).toBe(false);
 });

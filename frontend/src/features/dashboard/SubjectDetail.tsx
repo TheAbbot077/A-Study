@@ -161,6 +161,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
   const uploadFormRef = useRef<HTMLFormElement | null>(null);
   const requestVersionRef = useRef(0);
   const pollingControllersRef = useRef(new Map<string, AbortController>());
+  const synchronizeProcessingJobsRef = useRef<(entries: ReadonlyArray<readonly [string, ContentImportJob | null]>) => void>(() => undefined);
   const [subject, setSubject] = useState<Subject | null>(null);
   const [resources, setResources] = useState<LearningResource[]>([]);
   const [jobsByResource, setJobsByResource] = useState<Record<string, ContentImportJob | null>>({});
@@ -316,6 +317,10 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
     }
   }
 
+  useEffect(() => {
+    synchronizeProcessingJobsRef.current = synchronizeProcessingJobs;
+  });
+
   async function loadSubjectData() {
     const requestVersion = ++requestVersionRef.current;
     setLoading(true);
@@ -369,6 +374,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
 
   useEffect(() => {
     const requestVersion = ++requestVersionRef.current;
+    const pollingControllers = pollingControllersRef.current;
     let active = true;
     async function synchronizeSubject() {
       try {
@@ -392,7 +398,7 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
         setJobsByResource(Object.fromEntries(
           settled.filter((item): item is PromiseFulfilledResult<readonly [string, ContentImportJob | null]> => item.status === "fulfilled").map((item) => item.value),
         ));
-        synchronizeProcessingJobs(
+        synchronizeProcessingJobsRef.current(
           settled
             .filter((item): item is PromiseFulfilledResult<readonly [string, ContentImportJob | null]> => item.status === "fulfilled")
             .map((item) => item.value),
@@ -409,8 +415,8 @@ export function SubjectDetail({ subjectId }: SubjectDetailProps) {
     void synchronizeSubject();
     return () => {
       active = false;
-      for (const controller of pollingControllersRef.current.values()) controller.abort();
-      pollingControllersRef.current.clear();
+      for (const controller of pollingControllers.values()) controller.abort();
+      pollingControllers.clear();
     };
   }, [subjectId]);
 

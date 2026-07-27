@@ -52,8 +52,12 @@ def problem(exc: DjangoValidationError):
     response_status = status.HTTP_409_CONFLICT if code in {
         "INTENT_VERSION_CONFLICT",
         "WORKSPACE_VERSION_CONFLICT",
+        "ONBOARDING_VERSION_CONFLICT",
+        "CURRICULUM_SUBJECT_BINDING_MISSING",
+        "CURRICULUM_CANDIDATE_NOT_SELECTABLE",
         "INVALID_INTENT_TRANSITION",
         "INTENT_NOT_EDITABLE",
+        "ONBOARDING_NOT_EDITABLE",
     } else status.HTTP_422_UNPROCESSABLE_ENTITY
     return Response({"code": code, "detail": messages[0], "blockers": messages}, status=response_status)
 

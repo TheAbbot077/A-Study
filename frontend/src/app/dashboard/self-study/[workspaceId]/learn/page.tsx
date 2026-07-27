@@ -1,6 +1,6 @@
-import { SelfStudyWorkspace } from "@/features/self-study/SelfStudyWorkspace";
+import { AbbotLearningStudio } from "@/features/self-study/AbbotLearningStudio";
 
 export default async function SelfStudyWorkspaceLearnPage({ params }: { params: Promise<{ workspaceId: string }> }) {
   const { workspaceId } = await params;
-  return <SelfStudyWorkspace section="learn" workspaceId={workspaceId} />;
+  return <AbbotLearningStudio workspaceId={workspaceId} />;
 }

@@ -1,6 +1,6 @@
-import { SelfStudyWorkspace } from "@/features/self-study/SelfStudyWorkspace";
+import { ConversationalOnboarding } from "@/features/self-study/ConversationalOnboarding";
 
 export default async function SelfStudyWorkspaceIntentPage({ params }: { params: Promise<{ workspaceId: string }> }) {
   const { workspaceId } = await params;
-  return <SelfStudyWorkspace section="intent" workspaceId={workspaceId} />;
+  return <ConversationalOnboarding workspaceId={workspaceId} />;
 }

@@ -7,6 +7,7 @@ from apps.content_processing.models import ContentProcessingJob
 from apps.users.models import Institution
 
 from ..workspace_models import SelfStudyWorkspace, SelfStudyWorkspaceMaterial
+from ..onboarding_models import SelfStudyOnboardingIntent
 
 
 class SelfStudyWorkspaceSerializer(serializers.ModelSerializer):
@@ -97,3 +98,30 @@ class WorkspaceMaterialSerializer(serializers.ModelSerializer):
 
 class DiagnosticStartSerializer(serializers.Serializer):
     purpose_acknowledged = serializers.BooleanField()
+
+
+class StartOnboardingSerializer(serializers.Serializer):
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128, default="")
+
+
+class UpdateOnboardingContextSerializer(serializers.Serializer):
+    expected_version = serializers.IntegerField(min_value=1)
+    topic_query = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    study_intent = serializers.ChoiceField(choices=SelfStudyOnboardingIntent.choices, required=False, allow_blank=True)
+    qualification_query = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    jurisdiction_query = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    awarding_body_query = serializers.CharField(max_length=128, required=False, allow_blank=True)
+    level_query = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    target_description = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    target_date = serializers.DateField(required=False, allow_null=True)
+    target_date_known = serializers.BooleanField(required=False)
+    weekly_study_minutes = serializers.IntegerField(required=False, allow_null=True, min_value=15, max_value=6000)
+
+
+class OnboardingVersionCommandSerializer(serializers.Serializer):
+    expected_version = serializers.IntegerField(min_value=1)
+
+
+class SelectOnboardingCurriculumSerializer(serializers.Serializer):
+    expected_version = serializers.IntegerField(min_value=1)
+    candidate_id = serializers.UUIDField()

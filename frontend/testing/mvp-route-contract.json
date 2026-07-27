@@ -31,6 +31,12 @@
       "description": "PI-6F.9 learner-owned self-study workspace dashboard"
     },
     {
+      "route": "/dashboard/self-study/memory",
+      "auth": "authenticated",
+      "status": "implemented",
+      "description": "PI-7B.4-7B.7 learner-safe Learning Identity memory, preferences, timeline, and mentor-context doorway"
+    },
+    {
       "route": "/dashboard/self-study/:workspaceId",
       "auth": "authenticated",
       "status": "implemented",
@@ -40,7 +46,7 @@
       "route": "/dashboard/self-study/:workspaceId/intent",
       "auth": "authenticated",
       "status": "implemented",
-      "description": "PI-6F.9 workspace intent doorway"
+      "description": "PI-7A conversational onboarding and governed curriculum discovery"
     },
     {
       "route": "/dashboard/self-study/:workspaceId/materials",
@@ -70,7 +76,7 @@
       "route": "/dashboard/self-study/:workspaceId/learn",
       "auth": "authenticated",
       "status": "implemented",
-      "description": "PI-6F.9 workspace learning launch/resume doorway"
+      "description": "PI-6F.11 Abbot Learning Studio"
     },
     {
       "route": "/dashboard/subjects/:subjectId",
@@ -225,6 +231,14 @@
     { "path": "self-study/workspaces/:workspaceId/", "method": "PATCH", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/workspaces/:workspaceId/archive/", "method": "POST", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/workspaces/:workspaceId/onboarding/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/onboarding-session/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/onboarding-session/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/onboarding-session/context/", "method": "PATCH", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/onboarding-session/resolve-curriculum/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/onboarding-session/curriculum-candidates/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/onboarding-session/select-curriculum/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/onboarding-session/complete/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/onboarding-session/abandon/", "method": "POST", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/workspaces/:workspaceId/next-action/", "method": "GET", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/workspaces/:workspaceId/intent/", "method": "GET", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/workspaces/:workspaceId/intent/", "method": "POST", "status": "implemented", "queryKeys": [] },
@@ -242,6 +256,26 @@
     { "path": "self-study/workspaces/:workspaceId/plan/findings/", "method": "GET", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/workspaces/:workspaceId/plan/start-learning/", "method": "POST", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/workspaces/:workspaceId/learning/status/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/experience/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/start/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/resume/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/pause/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/turns/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/turns/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/turns/next/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/recap/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/review/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/current-node/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/progress/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "self-study/workspaces/:workspaceId/learn/citations/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "learning-identity/profiles/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "learning-identity/profiles/:profileId/", "method": "GET", "status": "implemented", "queryKeys": [] },
+    { "path": "learning-identity/profiles/:profileId/timeline/", "method": "GET", "status": "implemented", "queryKeys": ["limit"] },
+    { "path": "learning-identity/profiles/:profileId/mentor-context/", "method": "GET", "status": "implemented", "queryKeys": ["purpose"] },
+    { "path": "learning-identity/profiles/:profileId/preferences/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "learning-identity/profiles/:profileId/preferences/withdraw/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "learning-identity/profiles/:profileId/declarations/:attributeId/withdraw/", "method": "POST", "status": "implemented", "queryKeys": [] },
+    { "path": "learning-identity/profiles/:profileId/observations/:observationId/contest/", "method": "POST", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/evidence-mapping-runs/", "method": "GET", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/evidence-mapping-runs/:runId/", "method": "GET", "status": "implemented", "queryKeys": [] },
     { "path": "self-study/evidence-mapping-runs/:runId/evidence/", "method": "GET", "status": "implemented", "queryKeys": [] },

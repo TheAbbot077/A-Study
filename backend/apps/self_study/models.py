@@ -424,6 +424,7 @@ from .curriculum_models import (  # noqa: E402,F401
     CurriculumReference,
     CurriculumResolutionAttempt,
     CurriculumResolutionCandidate,
+    CurriculumSubjectBinding,
     CurriculumSelectionDecision,
     CurriculumVersion,
 )
@@ -447,3 +448,4 @@ from .bridge_models import *  # noqa: E402,F401,F403
 from .teaching_models import *  # noqa: E402,F401,F403
 from .orchestration_models import *  # noqa: E402,F401,F403
 from .workspace_models import *  # noqa: E402,F401,F403
+from .onboarding_models import *  # noqa: E402,F401,F403

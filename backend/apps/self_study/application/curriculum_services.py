@@ -37,7 +37,7 @@ from ..domain.curriculum_resolution import (
     ResolutionInput,
     evaluate_candidate,
 )
-from ..models import CurriculumResolutionFailure, IntentStatus, LearningMode, SelfStudyIntent
+from ..models import CurriculumResolutionFailure, IntentStatus, LearningMode, RequestedDepth, SelfStudyIntent
 from .services import _has_institutional_authority, ensure_access
 
 
@@ -230,6 +230,59 @@ class StartCurriculumResolutionService:
         return attempt, False
 
 
+class StartOnboardingCurriculumResolutionService:
+    def __init__(self, events=None, enqueue=False):
+        self.events = events or EventPublisher()
+        self.enqueue = enqueue
+
+    @transaction.atomic
+    def execute(self, *, onboarding_id, actor, policy_snapshot, idempotency_key):
+        from ..onboarding_models import SelfStudyOnboarding
+        from .workspace_services import ensure_workspace_access
+
+        onboarding = SelfStudyOnboarding.objects.select_for_update().select_related("workspace").get(id=onboarding_id)
+        ensure_workspace_access(actor, onboarding.workspace, mutate=True)
+        key = idempotency_key.strip()
+        if not key:
+            raise ValidationError("Idempotency key is required.", code="CURRICULUM_RESOLUTION_ALREADY_RUNNING")
+        existing = CurriculumResolutionAttempt.objects.filter(onboarding=onboarding, idempotency_key=key).first()
+        if existing:
+            return existing, True
+        defaults = {
+            "EXAM": RequestedDepth.EXAM_PREPARATION,
+            "MASTER_SUBJECT": RequestedDepth.ACADEMIC,
+        }
+        attempt = CurriculumResolutionAttempt.objects.create(
+            onboarding=onboarding,
+            intent_version=0,
+            policy_snapshot=policy_snapshot,
+            requested_by=actor,
+            goal_snapshot=onboarding.target_description or onboarding.topic_query,
+            target_credential=onboarding.qualification_query,
+            preferred_authority=onboarding.awarding_body_query,
+            jurisdiction=onboarding.jurisdiction_query,
+            preferred_language="en",
+            requested_depth=defaults.get(onboarding.study_intent, RequestedDepth.GENERAL),
+            education_context=onboarding.level_query,
+            algorithm_version=RESOLVER_ALGORITHM_VERSION,
+            idempotency_key=key,
+        )
+
+        def after_commit():
+            _event(
+                self.events,
+                "curriculum.resolution_started",
+                {"attempt_id": str(attempt.id), "onboarding_id": str(onboarding.id), "onboarding_version": onboarding.version},
+            )
+            if self.enqueue:
+                from ..infrastructure.celery.tasks import resolve_curriculum_task
+
+                resolve_curriculum_task.delay(str(attempt.id))
+
+        transaction.on_commit(after_commit)
+        return attempt, False
+
+
 def _registry_fingerprint(versions):
     state = [
         {
@@ -260,18 +313,26 @@ class ResolveCurriculumAttemptService:
         attempt.status = ResolutionAttemptStatus.EVALUATING
         attempt.started_at = attempt.started_at or timezone.now()
         attempt.save(update_fields=["status", "started_at"])
-        intent = SelfStudyIntent.objects.get(id=attempt.intent_id)
+        intent = SelfStudyIntent.objects.select_related("tenant", "subject").filter(id=attempt.intent_id).first()
+        onboarding = None
+        if intent is None and attempt.onboarding_id:
+            from ..onboarding_models import SelfStudyOnboarding
+
+            onboarding = SelfStudyOnboarding.objects.select_related("tenant").get(id=attempt.onboarding_id)
+        if intent is None and onboarding is None:
+            raise ValidationError("Resolution attempt has no authority context.", code="CURRICULUM_RESOLUTION_CONTEXT_INVALID")
         snapshot = attempt.policy_snapshot
+        tenant = intent.tenant if intent is not None else onboarding.tenant
         versions = list(
             CurriculumVersion.objects.select_related("curriculum_reference__authority")
-            .filter(Q(curriculum_reference__tenant__isnull=True) | Q(curriculum_reference__tenant=intent.tenant))
+            .filter(Q(curriculum_reference__tenant__isnull=True) | Q(curriculum_reference__tenant=tenant))
             .order_by("id")
         )
         fingerprint = _registry_fingerprint(versions)
         attempt.registry_snapshot_identifier = fingerprint
         request = ResolutionInput(
             goal=attempt.goal_snapshot,
-            subject_area=intent.subject.name,
+            subject_area=intent.subject.name if intent is not None else onboarding.topic_query,
             target_credential=attempt.target_credential,
             preferred_authority=attempt.preferred_authority,
             jurisdiction=attempt.jurisdiction,
@@ -279,7 +340,7 @@ class ResolveCurriculumAttemptService:
             education_context=attempt.education_context,
             permitted_sources=tuple(snapshot.curriculum_source_precedence),
             permitted_licences=tuple(snapshot.allowed_licence_categories),
-            tenant_id=str(intent.tenant_id),
+            tenant_id=str(tenant.id),
             today=date.today(),
         )
         evaluated = []
@@ -374,6 +435,18 @@ class ResolveCurriculumAttemptService:
         )
         if viable:
             winner = viable[0]
+            if intent is None:
+                attempt.status = ResolutionAttemptStatus.AWAITING_APPROVAL
+                attempt.completed_at = timezone.now()
+                attempt.save(update_fields=["status", "completed_at", "registry_snapshot_identifier"])
+                transaction.on_commit(
+                    lambda: _event(
+                        self.events,
+                        "self_study.onboarding.curriculum_candidates_available",
+                        {"attempt_id": str(attempt.id), "onboarding_id": str(attempt.onboarding_id), "candidate_count": len(viable)},
+                    )
+                )
+                return attempt
             decision_type = (
                 SelectionDecisionType.INSTITUTIONAL_SELECTION
                 if intent.mode == LearningMode.INSTITUTION_GOVERNED
@@ -420,6 +493,17 @@ class ResolveCurriculumAttemptService:
             partial = []
         composite_permitted = "GOVERNED_COMPOSITE" in snapshot.curriculum_source_precedence
         if len(partial) >= 2 and composite_permitted:
+            if intent is None:
+                attempt.status = ResolutionAttemptStatus.AWAITING_APPROVAL
+                attempt.save(update_fields=["status", "registry_snapshot_identifier"])
+                transaction.on_commit(
+                    lambda: _event(
+                        self.events,
+                        "self_study.onboarding.curriculum_candidates_available",
+                        {"attempt_id": str(attempt.id), "onboarding_id": str(attempt.onboarding_id), "candidate_count": len(partial)},
+                    )
+                )
+                return attempt
             partial.sort(key=lambda item: (item.hierarchy_rank, -item.total_score, str(item.curriculum_version_id)))
             proposal = CompositeCurriculumProposal.objects.create(
                 attempt=attempt,
@@ -440,24 +524,26 @@ class ResolveCurriculumAttemptService:
             )
             return attempt
         reasons = self._failure_reasons(versions, evaluated, composite_permitted)
-        failure = CurriculumResolutionFailure.objects.create(
-            intent=intent,
-            attempt=attempt,
-            policy_snapshot=snapshot,
-            reason_codes=reasons,
-            algorithm_version=attempt.algorithm_version,
-            registry_snapshot_identifier=fingerprint,
-            recorded_by=attempt.requested_by,
-            completed_at=timezone.now(),
-        )
+        failure = None
+        if intent is not None:
+            failure = CurriculumResolutionFailure.objects.create(
+                intent=intent,
+                attempt=attempt,
+                policy_snapshot=snapshot,
+                reason_codes=reasons,
+                algorithm_version=attempt.algorithm_version,
+                registry_snapshot_identifier=fingerprint,
+                recorded_by=attempt.requested_by,
+                completed_at=timezone.now(),
+            )
         attempt.status = ResolutionAttemptStatus.FAILED
-        attempt.completed_at = failure.completed_at
+        attempt.completed_at = failure.completed_at if failure else timezone.now()
         attempt.save(update_fields=["status", "completed_at", "registry_snapshot_identifier"])
         transaction.on_commit(
             lambda: _event(
                 self.events,
                 "curriculum.resolution_failed",
-                {"attempt_id": str(attempt.id), "failure_id": str(failure.id), "reason_codes": reasons},
+                {"attempt_id": str(attempt.id), "failure_id": str(failure.id) if failure else None, "reason_codes": reasons},
             )
         )
         return attempt

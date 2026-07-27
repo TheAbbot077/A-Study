@@ -34,6 +34,28 @@ class SelfStudyDiagnosticPlanExperienceRouteTests(SimpleTestCase):
             f"/self-study/workspaces/{workspace_id}/plan/start-learning/"
         )
 
+    def test_workspace_learning_studio_routes_are_registered(self):
+        workspace_id = "11111111-1111-4111-8111-111111111111"
+
+        expected = {
+            "self-study-workspace-learn-experience": "learn/experience",
+            "self-study-workspace-learn-start": "learn/start",
+            "self-study-workspace-learn-resume": "learn/resume",
+            "self-study-workspace-learn-pause": "learn/pause",
+            "self-study-workspace-learn-turns": "learn/turns",
+            "self-study-workspace-learn-next-turn": "learn/turns/next",
+            "self-study-workspace-learn-recap": "learn/recap",
+            "self-study-workspace-learn-review": "learn/review",
+            "self-study-workspace-learn-current-node": "learn/current-node",
+            "self-study-workspace-learn-progress": "learn/progress",
+            "self-study-workspace-learn-citations": "learn/citations",
+        }
+
+        for route_name, suffix in expected.items():
+            assert reverse(route_name, args=[workspace_id]).endswith(
+                f"/self-study/workspaces/{workspace_id}/{suffix}/"
+            )
+
 
 class SelfStudyDiagnosticPlanExperiencePrivacyTests(SimpleTestCase):
     def test_diagnostic_experience_projection_excludes_raw_scores(self):

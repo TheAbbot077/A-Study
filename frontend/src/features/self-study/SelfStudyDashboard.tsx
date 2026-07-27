@@ -103,6 +103,12 @@ export function SelfStudyDashboard() {
             A workspace is your learner-owned doorway into Abbot. It can hold your goals and materials,
             but it does not create a syllabus or override governed curriculum authority.
           </p>
+          <Link
+            className="inline-flex min-h-10 items-center rounded-[var(--radius-md)] border border-[var(--color-border)] px-4 text-sm font-semibold text-[var(--color-foreground)]"
+            href="/dashboard/self-study/memory"
+          >
+            What Abbot remembers
+          </Link>
           <dl className="grid gap-3 text-sm sm:grid-cols-3">
             <div>
               <dt className="font-medium text-[var(--color-foreground)]">Workspaces</dt>

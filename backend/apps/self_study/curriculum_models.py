@@ -210,6 +210,60 @@ class CurriculumVersion(models.Model):
         return super().save(*args, **kwargs)
 
 
+class CurriculumSubjectBindingStatus(models.TextChoices):
+    ACTIVE = "ACTIVE", "Active"
+    RETIRED = "RETIRED", "Retired"
+    INVALIDATED = "INVALIDATED", "Invalidated"
+
+
+class CurriculumSubjectBinding(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    curriculum_version = models.ForeignKey(
+        CurriculumVersion,
+        on_delete=models.PROTECT,
+        related_name="subject_bindings",
+    )
+    subject = models.ForeignKey(
+        "academic.Subject",
+        on_delete=models.PROTECT,
+        related_name="self_study_curriculum_bindings",
+    )
+    tenant = models.ForeignKey(
+        "users.Institution",
+        on_delete=models.PROTECT,
+        related_name="self_study_curriculum_subject_bindings",
+    )
+    status = models.CharField(max_length=16, choices=CurriculumSubjectBindingStatus.choices, default=CurriculumSubjectBindingStatus.ACTIVE)
+    authority_note = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey("users.User", on_delete=models.PROTECT, related_name="created_curriculum_subject_bindings")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "self_study_curriculum_subject_binding"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["curriculum_version", "subject", "tenant"],
+                name="ssi_curr_subj_binding_unique",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "status"], name="ssi_cur_subj_tenant_idx"),
+            models.Index(fields=["curriculum_version", "status"], name="ssi_cur_subj_ver_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.subject_id and self.tenant_id and self.subject.institution_id != self.tenant_id:
+            raise ValidationError("Subject binding must remain inside the tenant.", code="CURRICULUM_SUBJECT_BINDING_INVALID")
+        reference_tenant_id = self.curriculum_version.curriculum_reference.tenant_id if self.curriculum_version_id else None
+        if reference_tenant_id and reference_tenant_id != self.tenant_id:
+            raise ValidationError("Curriculum binding tenant does not match the registry reference.", code="CURRICULUM_SUBJECT_BINDING_INVALID")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+
 class ResolutionAttemptStatus(models.TextChoices):
     PENDING = "PENDING", "Pending"
     EVALUATING = "EVALUATING", "Evaluating"
@@ -222,8 +276,21 @@ class ResolutionAttemptStatus(models.TextChoices):
 
 class CurriculumResolutionAttempt(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    intent = models.ForeignKey("self_study.SelfStudyIntent", on_delete=models.PROTECT, related_name="curriculum_resolution_attempts")
-    intent_version = models.PositiveIntegerField()
+    intent = models.ForeignKey(
+        "self_study.SelfStudyIntent",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="curriculum_resolution_attempts",
+    )
+    onboarding = models.ForeignKey(
+        "self_study.SelfStudyOnboarding",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="curriculum_resolution_attempts",
+    )
+    intent_version = models.PositiveIntegerField(default=0)
     policy_snapshot = models.ForeignKey(
         "self_study.EffectiveLearningPolicySnapshot", on_delete=models.PROTECT, related_name="curriculum_resolution_attempts"
     )
@@ -251,9 +318,19 @@ class CurriculumResolutionAttempt(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["intent", "intent_version", "algorithm_version"],
+                condition=models.Q(intent__isnull=False),
                 name="self_study_one_resolution_per_intent_version",
             ),
-            models.UniqueConstraint(fields=["intent", "idempotency_key"], name="self_study_resolution_idempotency_unique"),
+            models.UniqueConstraint(
+                fields=["intent", "idempotency_key"],
+                condition=models.Q(intent__isnull=False),
+                name="self_study_resolution_idempotency_unique",
+            ),
+            models.UniqueConstraint(
+                fields=["onboarding", "idempotency_key"],
+                condition=models.Q(onboarding__isnull=False),
+                name="ssi_onbd_res_idem_uniq",
+            ),
         ]
 
 

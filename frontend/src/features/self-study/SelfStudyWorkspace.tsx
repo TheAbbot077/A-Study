@@ -192,10 +192,10 @@ export function SelfStudyWorkspace({ workspaceId, section = "overview" }: { work
         <section className={`${panelClassName} space-y-4`}>
           <h2 className="text-xl font-semibold text-[var(--color-foreground)]">Intent</h2>
           <p className="text-sm text-[var(--color-muted-foreground)]">
-            {workspace.intent_id ? "An intent is attached. Continue through the governed intent flow to keep policy acknowledgements current." : "Answer what you want to learn before Abbot can safely plan anything."}
+            {workspace.intent_id ? "An intent is attached. Continue through the governed intent flow to keep policy acknowledgements current." : "Choose what you want Abbot to help you do. This records learner intent; it does not create or edit curriculum authority."}
           </p>
           <Link className="inline-flex min-h-10 items-center rounded-[var(--radius-md)] border border-[var(--color-border)] px-4 text-sm font-medium" href={`/dashboard/self-study/${workspace.id}/intent`}>
-            {workspace.intent_id ? "Resume intent" : "Answer intent questions"}
+            {workspace.intent_id ? "Resume onboarding" : "Start conversational onboarding"}
           </Link>
         </section>
 

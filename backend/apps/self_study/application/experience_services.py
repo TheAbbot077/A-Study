@@ -8,11 +8,27 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 
 from ..application.diagnostic_services import CreateEntryDiagnosticService, DiagnosticDeliveryService
+from ..application.orchestration_services import (
+    CreateTeachingSessionService,
+    GenerateTeachingTurnService,
+    PauseTeachingSessionService,
+    RecordLearnerTurnService,
+    ResumeTeachingSessionService,
+    StartTeachingSessionService,
+)
 from ..bridge_models import BridgePlan, BridgePlanNode, BridgePlanStatus, MaterialFeasibility
 from ..diagnostic_models import DiagnosticPlacementProfile, DiagnosticStatus, ProfileNodeClassification, ProfileStatus
 from ..domain.workspace import WorkspaceBlockerCode
 from ..models import IntentStatus
-from ..orchestration_models import SelfStudyTeachingSessionState
+from ..orchestration_models import (
+    SelfStudyTeachingSession,
+    SelfStudyTeachingSessionState,
+    TeachingSessionNode,
+    TeachingSessionNodeState,
+    TeachingTurn,
+    TeachingTurnActor,
+    TeachingTurnCitation,
+)
 from ..teaching_models import TeachingPreparationManifestStatus
 from ..workspace_models import SelfStudyWorkspace, SelfStudyWorkspaceStatus
 from .workspace_services import ensure_workspace_access
@@ -40,6 +56,29 @@ class ExperienceBlockerCode:
     TEACHING_NOT_PREPARED = "TEACHING_NOT_PREPARED"
     TEACHING_RETRIEVAL_NOT_READY = "TEACHING_RETRIEVAL_NOT_READY"
     LEARNING_START_NOT_ALLOWED = "LEARNING_START_NOT_ALLOWED"
+    LEARNING_STUDIO_NOT_READY = "LEARNING_STUDIO_NOT_READY"
+    LEARNING_SESSION_NOT_FOUND = "LEARNING_SESSION_NOT_FOUND"
+    LEARNING_SESSION_NOT_OWNED = "LEARNING_SESSION_NOT_OWNED"
+    LEARNING_SESSION_STALE = "LEARNING_SESSION_STALE"
+    LEARNING_SESSION_INVALIDATED = "LEARNING_SESSION_INVALIDATED"
+    LEARNING_SESSION_BLOCKED = "LEARNING_SESSION_BLOCKED"
+    TEACHING_TURN_PENDING = "TEACHING_TURN_PENDING"
+    TEACHING_TURN_FAILED = "TEACHING_TURN_FAILED"
+    TEACHING_CITATION_UNAVAILABLE = "TEACHING_CITATION_UNAVAILABLE"
+    CURRENT_NODE_NOT_READY = "CURRENT_NODE_NOT_READY"
+    CURRENT_NODE_BLOCKED = "CURRENT_NODE_BLOCKED"
+    CURRENT_NODE_COMPLETE = "CURRENT_NODE_COMPLETE"
+    CONCEPT_CHECK_REQUIRED_NEXT = "CONCEPT_CHECK_REQUIRED_NEXT"
+    PLAN_NODE_ADVANCE_NOT_ALLOWED = "PLAN_NODE_ADVANCE_NOT_ALLOWED"
+    TEACHING_SESSION_VERSION_CONFLICT = "TEACHING_SESSION_VERSION_CONFLICT"
+    LEARNER_MESSAGE_REQUIRED = "LEARNER_MESSAGE_REQUIRED"
+    LEARNER_MESSAGE_TOO_LONG = "LEARNER_MESSAGE_TOO_LONG"
+    LEARNER_MESSAGE_REJECTED = "LEARNER_MESSAGE_REJECTED"
+    PROMPT_INJECTION_RISK = "PROMPT_INJECTION_RISK"
+    SOURCE_NOT_AVAILABLE = "SOURCE_NOT_AVAILABLE"
+    SOURCE_RETIRED = "SOURCE_RETIRED"
+    SOURCE_UNSAFE = "SOURCE_UNSAFE"
+    SOURCE_STALE = "SOURCE_STALE"
 
 
 @dataclass(frozen=True)
@@ -366,4 +405,263 @@ class SelfStudyPlanExperienceService:
             "blocked": bool(node.blocker_count or blocker_codes),
             "blocker_codes": list(dict.fromkeys(blocker_codes)),
             "finding_codes": [],
+        }
+
+
+class LearningStudioExperienceService:
+    def _workspace(self, *, workspace_id, actor, mutate: bool = False) -> SelfStudyWorkspace:
+        queryset = SelfStudyWorkspace.objects.select_related(
+            "intent",
+            "active_bridge_plan",
+            "active_teaching_preparation",
+            "active_teaching_session",
+        )
+        if mutate:
+            queryset = queryset.select_for_update()
+        workspace = queryset.get(id=workspace_id)
+        ensure_workspace_access(actor, workspace, mutate=mutate)
+        return workspace
+
+    def _session(self, workspace: SelfStudyWorkspace) -> SelfStudyTeachingSession | None:
+        if workspace.active_teaching_session_id:
+            return workspace.active_teaching_session
+        if not workspace.intent_id:
+            return None
+        return workspace.intent.teaching_sessions.select_related("current_session_node__graph_node").order_by("-created_at").first()
+
+    def experience(self, *, workspace_id, actor) -> dict:
+        workspace = self._workspace(workspace_id=workspace_id, actor=actor)
+        session = self._session(workspace)
+        blockers = self._blockers(workspace, session)
+        node = session.current_session_node if session and session.current_session_node_id else None
+        return {
+            "workspace_id": str(workspace.id),
+            "teaching_session_id": str(session.id) if session else "",
+            "session_version": session.version if session else 0,
+            "bridge_plan_id": str(workspace.active_bridge_plan_id) if workspace.active_bridge_plan_id else "",
+            "current_plan_node_id": str(node.bridge_node_id) if node else "",
+            "current_curriculum_node_id": str(node.graph_node_id) if node else "",
+            "session_status": session.state if session else "NOT_STARTED",
+            "node_status": node.state if node else "NOT_SELECTED",
+            "can_start": not session and not blockers,
+            "can_resume": bool(session and session.state in {SelfStudyTeachingSessionState.PENDING, SelfStudyTeachingSessionState.PAUSED}),
+            "can_send_message": bool(session and session.state == SelfStudyTeachingSessionState.AWAITING_LEARNER and not blockers),
+            "can_pause": bool(session and session.state in {SelfStudyTeachingSessionState.ACTIVE, SelfStudyTeachingSessionState.AWAITING_LEARNER}),
+            "can_request_recap": bool(session and session.state == SelfStudyTeachingSessionState.AWAITING_LEARNER and not blockers),
+            "can_advance": bool(session and session.state == SelfStudyTeachingSessionState.NODE_COMPLETE and not blockers),
+            "can_start_concept_check": bool(session and session.state == SelfStudyTeachingSessionState.NODE_COMPLETE),
+            "progress_summary": self.progress(workspace=workspace, session=session),
+            "blocker_codes": blockers,
+            "next_action": self._next_action(session, blockers),
+        }
+
+    @transaction.atomic
+    def start(self, *, workspace_id, actor) -> dict:
+        workspace = self._workspace(workspace_id=workspace_id, actor=actor, mutate=True)
+        session = self._session(workspace)
+        blockers = self._blockers(workspace, session)
+        if blockers and not session:
+            raise ValidationError("Learning studio is not ready.", code=ExperienceBlockerCode.LEARNING_STUDIO_NOT_READY)
+        if not session:
+            if not workspace.active_teaching_preparation_id:
+                raise ValidationError("Teaching preparation is required.", code=ExperienceBlockerCode.TEACHING_NOT_PREPARED)
+            session, _created = CreateTeachingSessionService().execute(
+                preparation_manifest_id=workspace.active_teaching_preparation_id,
+                actor=actor,
+                idempotency_key=f"workspace:{workspace.id}",
+            )
+            workspace.active_teaching_session = session
+            workspace.version += 1
+            workspace.save(update_fields=["active_teaching_session", "version", "updated_at"])
+        if session.state in {SelfStudyTeachingSessionState.PENDING, SelfStudyTeachingSessionState.PAUSED}:
+            service = StartTeachingSessionService() if session.state == SelfStudyTeachingSessionState.PENDING else ResumeTeachingSessionService()
+            session = service.execute(session.id, actor, expected_version=session.version)
+        return self.experience(workspace_id=workspace.id, actor=actor)
+
+    @transaction.atomic
+    def resume(self, *, workspace_id, actor) -> dict:
+        workspace = self._workspace(workspace_id=workspace_id, actor=actor, mutate=True)
+        session = self._require_session(workspace)
+        if session.state == SelfStudyTeachingSessionState.PAUSED:
+            ResumeTeachingSessionService().execute(session.id, actor, expected_version=session.version)
+        elif session.state == SelfStudyTeachingSessionState.PENDING:
+            StartTeachingSessionService().execute(session.id, actor, expected_version=session.version)
+        return self.experience(workspace_id=workspace.id, actor=actor)
+
+    @transaction.atomic
+    def pause(self, *, workspace_id, actor) -> dict:
+        workspace = self._workspace(workspace_id=workspace_id, actor=actor, mutate=True)
+        session = self._require_session(workspace)
+        PauseTeachingSessionService().execute(session.id, actor, expected_version=session.version, reason="LEARNER_PAUSED")
+        return self.experience(workspace_id=workspace.id, actor=actor)
+
+    def turns(self, *, workspace_id, actor) -> list[dict]:
+        session = self._require_owned_session(workspace_id=workspace_id, actor=actor)
+        citations_by_turn: dict[str, list[dict]] = {}
+        for citation in TeachingTurnCitation.objects.filter(turn__session=session).select_related("resource").order_by("turn_id", "id"):
+            citations_by_turn.setdefault(str(citation.turn_id), []).append(self._citation_view(citation))
+        return [self._turn_view(turn, citations_by_turn.get(str(turn.id), [])) for turn in session.turns.order_by("sequence_number", "id")]
+
+    @transaction.atomic
+    def submit_turn(self, *, workspace_id, actor, text: str, idempotency_key: str, expected_version: int) -> dict:
+        text = text.strip()
+        if not text:
+            raise ValidationError("Learner message is required.", code=ExperienceBlockerCode.LEARNER_MESSAGE_REQUIRED)
+        if len(text) > 12000:
+            raise ValidationError("Learner message is too long.", code=ExperienceBlockerCode.LEARNER_MESSAGE_TOO_LONG)
+        workspace = self._workspace(workspace_id=workspace_id, actor=actor, mutate=True)
+        session = self._require_session(workspace)
+        if session.version != expected_version:
+            raise ValidationError(
+                "Teaching session version changed before the learner response was submitted.",
+                code=ExperienceBlockerCode.TEACHING_SESSION_VERSION_CONFLICT,
+            )
+        if session.state != SelfStudyTeachingSessionState.AWAITING_LEARNER:
+            raise ValidationError(
+                "The teaching session is not awaiting a learner response.",
+                code=ExperienceBlockerCode.TEACHING_TURN_PENDING,
+            )
+        turn = RecordLearnerTurnService().execute(
+            session.id,
+            actor,
+            text=text,
+            expected_version=session.version,
+            idempotency_key=idempotency_key,
+        )
+        return self._turn_view(turn, [])
+
+    @transaction.atomic
+    def next_turn(self, *, workspace_id, actor, learner_input: str = "") -> dict:
+        workspace = self._workspace(workspace_id=workspace_id, actor=actor, mutate=True)
+        session = self._require_session(workspace)
+        turn = GenerateTeachingTurnService().execute(session.id, learner_input=learner_input)
+        citations = [self._citation_view(citation) for citation in turn.citations.select_related("resource").order_by("id")]
+        return self._turn_view(turn, citations)
+
+    def current_node(self, *, workspace_id, actor) -> dict:
+        session = self._require_owned_session(workspace_id=workspace_id, actor=actor)
+        if not session.current_session_node_id:
+            raise ValidationError("No current teaching node.", code=ExperienceBlockerCode.CURRENT_NODE_NOT_READY)
+        total = session.nodes.count()
+        return self._node_view(session.current_session_node, total)
+
+    def progress_response(self, *, workspace_id, actor) -> dict:
+        workspace = self._workspace(workspace_id=workspace_id, actor=actor)
+        return self.progress(workspace=workspace, session=self._session(workspace))
+
+    def citations(self, *, workspace_id, actor) -> list[dict]:
+        session = self._require_owned_session(workspace_id=workspace_id, actor=actor)
+        return [self._citation_view(citation) for citation in TeachingTurnCitation.objects.filter(turn__session=session).select_related("resource").order_by("turn__sequence_number", "id")]
+
+    def progress(self, *, workspace: SelfStudyWorkspace, session: SelfStudyTeachingSession | None) -> dict:
+        if not session:
+            return {"completed_teaching_segments": 0, "total_teaching_segments": 0, "current_index": 0, "concept_check_ready": False}
+        nodes = list(session.nodes.order_by("topological_layer", "plan_ordinal", "id"))
+        current_id = session.current_session_node_id
+        current_index = next((index for index, node in enumerate(nodes, start=1) if node.id == current_id), 0)
+        return {
+            "completed_teaching_segments": sum(1 for node in nodes if node.state == TeachingSessionNodeState.NODE_COMPLETE),
+            "total_teaching_segments": len(nodes),
+            "current_index": current_index,
+            "concept_check_ready": session.state == SelfStudyTeachingSessionState.NODE_COMPLETE,
+            "next_label": "Ready for concept check" if session.state == SelfStudyTeachingSessionState.NODE_COMPLETE else "Learning with Abbot",
+        }
+
+    def _blockers(self, workspace: SelfStudyWorkspace, session: SelfStudyTeachingSession | None) -> list[str]:
+        blockers: list[str] = []
+        if workspace.status == SelfStudyWorkspaceStatus.ARCHIVED:
+            blockers.append(WorkspaceBlockerCode.WORKSPACE_ARCHIVED.value)
+        if not workspace.active_bridge_plan_id:
+            blockers.append(ExperienceBlockerCode.PLAN_NOT_AVAILABLE)
+        elif workspace.active_bridge_plan.status in {BridgePlanStatus.STALE, BridgePlanStatus.INVALIDATED, BridgePlanStatus.SUPERSEDED}:
+            blockers.append(
+                {
+                    BridgePlanStatus.STALE: ExperienceBlockerCode.PLAN_STALE,
+                    BridgePlanStatus.INVALIDATED: ExperienceBlockerCode.PLAN_INVALIDATED,
+                    BridgePlanStatus.SUPERSEDED: ExperienceBlockerCode.PLAN_SUPERSEDED,
+                }[workspace.active_bridge_plan.status]
+            )
+        elif workspace.active_bridge_plan.status != BridgePlanStatus.ACTIVE:
+            blockers.append(ExperienceBlockerCode.PLAN_NOT_ACTIVE)
+        if not workspace.active_teaching_preparation_id or workspace.active_teaching_preparation.status != TeachingPreparationManifestStatus.READY:
+            blockers.append(ExperienceBlockerCode.TEACHING_NOT_PREPARED)
+        if session and session.state == SelfStudyTeachingSessionState.STALE:
+            blockers.append(ExperienceBlockerCode.LEARNING_SESSION_STALE)
+        if session and session.state == SelfStudyTeachingSessionState.INVALIDATED:
+            blockers.append(ExperienceBlockerCode.LEARNING_SESSION_INVALIDATED)
+        if session and session.state == SelfStudyTeachingSessionState.BLOCKED:
+            blockers.append(ExperienceBlockerCode.LEARNING_SESSION_BLOCKED)
+        return list(dict.fromkeys(blockers))
+
+    def _next_action(self, session: SelfStudyTeachingSession | None, blockers: list[str]) -> str:
+        if blockers:
+            return "resolve_blockers"
+        if not session:
+            return "start_learning"
+        if session.state == SelfStudyTeachingSessionState.PAUSED:
+            return "resume_learning"
+        if session.state == SelfStudyTeachingSessionState.AWAITING_LEARNER:
+            return "send_response"
+        if session.state == SelfStudyTeachingSessionState.NODE_COMPLETE:
+            return "concept_check"
+        if session.state == SelfStudyTeachingSessionState.COMPLETED:
+            return "plan_complete"
+        return "continue_learning"
+
+    def _require_session(self, workspace: SelfStudyWorkspace) -> SelfStudyTeachingSession:
+        session = self._session(workspace)
+        if not session:
+            raise ValidationError("Learning session is not available.", code=ExperienceBlockerCode.LEARNING_SESSION_NOT_FOUND)
+        if session.learner_id != workspace.learner_id or session.tenant_id != workspace.tenant_id:
+            raise PermissionDenied(ExperienceBlockerCode.LEARNING_SESSION_NOT_OWNED)
+        return session
+
+    def _require_owned_session(self, *, workspace_id, actor) -> SelfStudyTeachingSession:
+        workspace = self._workspace(workspace_id=workspace_id, actor=actor)
+        return self._require_session(workspace)
+
+    def _node_view(self, node: TeachingSessionNode, total: int) -> dict:
+        return {
+            "plan_node_id": str(node.bridge_node_id),
+            "curriculum_node_id": str(node.graph_node_id),
+            "node_type": node.graph_node.node_type,
+            "title": node.graph_node.title,
+            "learning_objective": getattr(node.graph_node, "description", ""),
+            "sequence_index": node.plan_ordinal,
+            "total_sequence_count": total,
+            "dependency_summary": {"topological_layer": node.topological_layer},
+            "coverage_state": node.teaching_pack.coverage_state,
+            "material_status": node.teaching_pack.material_feasibility,
+            "teaching_pack_id": str(node.teaching_pack_id),
+            "citations_available": bool(node.permitted_roles),
+            "blocked": node.state == TeachingSessionNodeState.BLOCKED,
+            "blocker_codes": [ExperienceBlockerCode.CURRENT_NODE_BLOCKED] if node.state == TeachingSessionNodeState.BLOCKED else [],
+        }
+
+    def _turn_view(self, turn: TeachingTurn, citations: list[dict]) -> dict:
+        return {
+            "turn_id": str(turn.id),
+            "role": turn.actor,
+            "action_type": turn.action,
+            "status": "FAILED" if turn.failure_code else "READY",
+            "content": turn.response_text,
+            "created_at": turn.created_at.isoformat(),
+            "citations": citations,
+            "rationale_codes": [turn.failure_code] if turn.failure_code else [],
+            "requires_response": turn.actor == TeachingTurnActor.ABBOT and turn.action in {"ASK", "PRACTICE", "CHECK_UNDERSTANDING", "REFLECT"},
+            "safe_transition": "concept_check" if turn.session.state == SelfStudyTeachingSessionState.NODE_COMPLETE else "awaiting_learner",
+        }
+
+    def _citation_view(self, citation: TeachingTurnCitation) -> dict:
+        payload = citation.citation or {}
+        return {
+            "citation_id": str(citation.id),
+            "resource_id": str(citation.resource_id),
+            "resource_title": getattr(citation.resource, "title", ""),
+            "page": payload.get("page", payload.get("page_number", "")),
+            "segment": payload.get("segment", payload.get("label", "")),
+            "excerpt": str(payload.get("excerpt", ""))[:500],
+            "evidence_unit_id": str(citation.evidence_unit_id),
+            "mapping_id": str(citation.teaching_pack_resource.accepted_mapping_id),
+            "source_state": "ACTIVE",
         }
