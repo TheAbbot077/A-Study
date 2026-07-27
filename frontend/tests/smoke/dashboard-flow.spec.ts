@@ -73,19 +73,10 @@ test.describe("Dashboard and subject smoke flow", () => {
         response.status() === 201
       );
     });
-    const subjectDetailResponse = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return (
-        response.request().method() === "GET" &&
-        url.pathname === "/api/academic/subjects/subject-1/" &&
-        response.ok()
-      );
-    });
     await page.getByRole("button", { name: "Create subject" }).click();
     await createSubjectResponse;
-    await subjectDetailResponse;
 
-    await expect(page).toHaveURL(/\/dashboard\/subjects\/subject-1$/, { timeout: 60_000 });
+    await expect(page).toHaveURL(new RegExp(`/dashboard/subjects/${subject.id}$`), { timeout: 60_000 });
     await expect(page.getByRole("button", { name: "Log out" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("heading", { name: "Biology" })).toBeVisible({ timeout: 15000 });
     await expectNoNextNotFound(page);

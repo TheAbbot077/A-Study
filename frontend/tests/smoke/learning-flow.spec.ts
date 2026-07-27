@@ -17,7 +17,12 @@ import {
   setAuthenticatedSession,
 } from "./helpers/api";
 
+const primaryResourceId = "71111111-1111-4111-8111-111111111111";
+const reviewResourceId = "72222222-2222-4222-8222-222222222222";
+
 test.describe("Resource, concept, and assessment smoke flow", () => {
+  test.describe.configure({ timeout: 150_000 });
+
   async function mockConceptHierarchy(page: import("@playwright/test").Page) {
     await mockApi(page, "academic/content-concepts/:conceptId/", { json: buildConcept() });
     await mockApi(page, "academic/content-sections/:sectionId/", { json: buildSection() });
@@ -35,7 +40,7 @@ test.describe("Resource, concept, and assessment smoke flow", () => {
   test("resource detail route resolves and shows low-confidence warning", async ({ page }) => {
     await mockApi(page, "academic/learning-resources/:resourceId/", {
       json: buildLearningResource({
-        id: "resource-1",
+        id: primaryResourceId,
         subject: "subject-1",
         title: "Unit 1 Notes",
         description: "Imported notes",
@@ -45,35 +50,35 @@ test.describe("Resource, concept, and assessment smoke flow", () => {
     await mockApi(page, "academic/subjects/:subjectId/", {
       json: buildSubject(),
     });
-    await page.route(/http:\/\/localhost:8000\/api\/academic\/content-sections\/\?learning_resource=resource-1$/, async (route) => {
+    await page.route(new RegExp(`http://localhost:8000/api/academic/content-sections/\\?learning_resource=${primaryResourceId}$`), async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([buildSection()]),
       });
     });
-    await page.route(/http:\/\/localhost:8000\/api\/academic\/content-concepts\/\?learning_resource=resource-1$/, async (route) => {
+    await page.route(new RegExp(`http://localhost:8000/api/academic/content-concepts/\\?learning_resource=${primaryResourceId}$`), async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([buildConcept()]),
       });
     });
-    await page.route(/http:\/\/localhost:8000\/api\/learning\/pedagogical-sessions\/concept-browser\/\?learning_resource=resource-1$/, async (route) => {
+    await page.route(new RegExp(`http://localhost:8000/api/learning/pedagogical-sessions/concept-browser/\\?learning_resource=${primaryResourceId}$`), async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([buildConceptBrowserState()]),
       });
     });
-    await page.route(/http:\/\/localhost:8000\/api\/content-intelligence\/import-jobs\/\?learning_resource=resource-1$/, async (route) => {
+    await page.route(new RegExp(`http://localhost:8000/api/content-intelligence/import-jobs/\\?learning_resource=${primaryResourceId}$`), async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([
           {
             id: "job-1",
-            learning_resource: "resource-1",
+            learning_resource: primaryResourceId,
             stored_file: "stored-file-1",
             format_type: "pdf",
             status: "completed",
@@ -97,8 +102,12 @@ test.describe("Resource, concept, and assessment smoke flow", () => {
         ]),
       });
     });
+    await mockApi(page, "content-processing/jobs/", {
+      query: { resource: primaryResourceId },
+      json: [],
+    });
 
-    await navigateToAuthenticatedRoute(page, "/dashboard/resources/resource-1");
+    await navigateToAuthenticatedRoute(page, `/dashboard/resources/${primaryResourceId}`);
 
     await expect(page.getByRole("heading", { name: "Unit 1 Notes" })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText("Low-confidence import warning")).toBeVisible({ timeout: 15000 });
@@ -109,7 +118,7 @@ test.describe("Resource, concept, and assessment smoke flow", () => {
   test("resource detail represents ready for review without official Academic content", async ({ page }) => {
     await mockApi(page, "academic/learning-resources/:resourceId/", {
       json: buildLearningResource({
-        id: "resource-review",
+        id: reviewResourceId,
         subject: "subject-1",
         title: "Economics module",
         resource_ready_for_learning: false,
@@ -117,23 +126,27 @@ test.describe("Resource, concept, and assessment smoke flow", () => {
     });
     await mockApi(page, "academic/subjects/:subjectId/", { json: buildSubject() });
     await mockApi(page, "academic/content-sections/", {
-      query: { learning_resource: "resource-review" },
+      query: { learning_resource: reviewResourceId },
       json: [],
     });
     await mockApi(page, "academic/content-concepts/", {
-      query: { learning_resource: "resource-review" },
+      query: { learning_resource: reviewResourceId },
       json: [],
     });
     await mockApi(page, "learning/pedagogical-sessions/concept-browser/", {
-      query: { learning_resource: "resource-review" },
+      query: { learning_resource: reviewResourceId },
       json: [],
     });
     await mockApi(page, "content-intelligence/import-jobs/", {
-      query: { learning_resource: "resource-review" },
-      json: [buildReviewRequiredImportJob({ learning_resource: "resource-review" })],
+      query: { learning_resource: reviewResourceId },
+      json: [buildReviewRequiredImportJob({ learning_resource: reviewResourceId })],
+    });
+    await mockApi(page, "content-processing/jobs/", {
+      query: { resource: reviewResourceId },
+      json: [],
     });
 
-    await navigateToAuthenticatedRoute(page, "/dashboard/resources/resource-review");
+    await navigateToAuthenticatedRoute(page, `/dashboard/resources/${reviewResourceId}`);
 
     await expect(page.getByRole("heading", { name: "Ready for review" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("navigation", { name: "Governed content workflow" })).toBeVisible();

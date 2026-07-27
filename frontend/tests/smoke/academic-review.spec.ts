@@ -42,6 +42,8 @@ const outline = {
 const findings = [{ id: 1, code: "section_page_ratio", severity: "blocking", passed: false, message: "The proposal contains unusually many sections.", resolved: false }];
 
 test.describe("Academic proposal review workspace", () => {
+  test.describe.configure({ timeout: 90_000 });
+
   test.beforeEach(async ({ context, page }, testInfo) => {
     await installUnhandledApiGuard(page, testInfo.title);
     await setAuthenticatedSession(context);

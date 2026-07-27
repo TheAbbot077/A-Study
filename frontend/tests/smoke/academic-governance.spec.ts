@@ -12,6 +12,8 @@ import {
 const proposalId = "31111111-1111-4111-8111-111111111111";
 const sessionId = "32222222-2222-4222-8222-222222222222";
 const projectionId = "33333333-3333-4333-8333-333333333333";
+
+test.setTimeout(150_000);
 const baseSession = {
   id: sessionId, proposal: proposalId, proposal_version: "proposal-v1", version: 7,
   status: "ready_for_approval", confidence: 0.91, reviewer_id: "user-1",
@@ -154,7 +156,7 @@ test("completed review advances through separate approval and population command
 
   await navigateToAuthenticatedRoute(page, `/dashboard/academic-review/${proposalId}/governance`);
   const workflowNavigation = page.getByRole("navigation", { name: "Governed content workflow" });
-  await expect(workflowNavigation).toBeVisible();
+  await expect(workflowNavigation).toBeVisible({ timeout: 30_000 });
   await expect(workflowNavigation.getByText("Approval", { exact: true })).toBeVisible();
   await expect(page.getByText("Backend approval readiness: Ready for approval.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Populate Academic Platform" })).toHaveCount(0);

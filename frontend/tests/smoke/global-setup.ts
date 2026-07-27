@@ -9,12 +9,6 @@ const PUBLIC_WARMUP_ROUTES = [
 
 const AUTHENTICATED_WARMUP_ROUTES = [
   "/dashboard",
-  "/dashboard/subjects/warmup-subject",
-  "/dashboard/resources/warmup-resource",
-  "/dashboard/concepts/warmup-concept",
-  "/dashboard/concepts/warmup-concept/assessment?session=warmup-session",
-  "/dashboard/academic-review/warmup-proposal",
-  "/dashboard/academic-review/warmup-proposal/governance?session=warmup-session",
 ] as const;
 
 export default async function globalSetup(config: FullConfig) {

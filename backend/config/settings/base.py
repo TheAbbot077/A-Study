@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "apps.academic_review.apps.AcademicReviewConfig",
     "apps.retrieval.apps.RetrievalConfig",
     "apps.self_study.apps.SelfStudyConfig",
+    "apps.learning_identity.apps.LearningIdentityConfig",
 ]
 
 MIDDLEWARE = [

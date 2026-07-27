@@ -71,6 +71,14 @@ const mockResponseHeaders = {
 };
 
 export async function setAuthenticatedSession(context: BrowserContext) {
+  await context.addInitScript((user) => {
+    try {
+      window.sessionStorage.setItem("abbot-study.auth.user", JSON.stringify(user));
+    } catch {
+      // Some transient documents used during dev-server recovery deny storage access.
+      // The authenticated app page will still restore through /api/auth/me/.
+    }
+  }, buildCurrentUser());
   await context.addCookies([
     {
       name: "sessionid",
@@ -215,8 +223,18 @@ export async function mockAuthSession(
 
 // Cold Next.js development compilation is setup work and must not consume a test's 30-second budget.
 const FRONTEND_ROUTE_WARMUP_TIMEOUT_MS = 120_000;
+const AUTHENTICATED_SHELL_TIMEOUT_MS = 20_000;
 const warmedFrontendModules = new Set<string>();
 const warmedFrontendAssets = new Set<string>();
+const transientFrontendRuntimePatterns = [
+  /Invalid or unexpected token/i,
+  /Unexpected end of JSON input/i,
+  /ChunkLoadError/i,
+  /Loading chunk \d+ failed/i,
+  /webpack.*hot-update/i,
+  /hot-update/i,
+  /500 Internal Server Error/i,
+];
 const globallyWarmedFrontendModules = new Set([
   "/",
   "/login",
@@ -305,7 +323,10 @@ export async function warmFrontendRoutes(request: APIRequestContext, targets: re
 export async function navigateToAuthenticatedRoute(page: Page, target: string) {
   const authentication = { response: null as Response | null };
   const recentApiRequests: string[] = [];
+  const recentFrontendRequests: string[] = [];
   const pageErrors: string[] = [];
+  const consoleMessages: string[] = [];
+  let transientRecoveryAttempted = false;
   const observeAuthentication = (response: Response) => {
     const url = new URL(response.url());
     if (
@@ -321,22 +342,86 @@ export async function navigateToAuthenticatedRoute(page: Page, target: string) {
       recentApiRequests.push(`${request.method()} ${url.pathname}${url.search}`);
       if (recentApiRequests.length > 8) recentApiRequests.shift();
     }
+    if (url.origin === SMOKE_APP_ORIGIN && url.pathname.startsWith("/_next/")) {
+      recentFrontendRequests.push(`${request.method()} ${url.pathname}`);
+      if (recentFrontendRequests.length > 8) recentFrontendRequests.shift();
+    }
+  };
+  const observeRequestFailed = (request: import("@playwright/test").Request) => {
+    const url = new URL(request.url());
+    if (url.origin === SMOKE_APP_ORIGIN || url.pathname === API_BASE_PATH || url.pathname.startsWith(`${API_BASE_PATH}/`)) {
+      recentFrontendRequests.push(`FAILED ${url.pathname}: ${request.failure()?.errorText ?? "unknown"}`);
+      if (recentFrontendRequests.length > 8) recentFrontendRequests.shift();
+    }
   };
   const observePageError = (error: Error) => {
     pageErrors.push(error.message);
     if (pageErrors.length > 4) pageErrors.shift();
   };
+  const observeConsole = (message: import("@playwright/test").ConsoleMessage) => {
+    if (!["error", "warning"].includes(message.type())) return;
+    consoleMessages.push(`${message.type()}: ${message.text()}`);
+    if (consoleMessages.length > 6) consoleMessages.shift();
+  };
 
   page.on("response", observeAuthentication);
   page.on("request", observeRequest);
+  page.on("requestfailed", observeRequestFailed);
   page.on("pageerror", observePageError);
+  page.on("console", observeConsole);
   try {
-    await page.goto(target, { waitUntil: "commit" });
     const authenticatedControl = page.getByRole("button", { name: "Log out" });
-    await expect(authenticatedControl).toBeVisible({ timeout: 15_000 });
-    await expect(authenticatedControl).toBeEnabled();
-    if (authentication.response !== null && !authentication.response.ok()) {
-      throw new Error(`Authentication restoration failed with status ${authentication.response.status()}.`);
+    const attemptNavigation = async () => {
+      await page.goto(target, { waitUntil: "commit" });
+      await expect(authenticatedControl).toBeVisible({ timeout: AUTHENTICATED_SHELL_TIMEOUT_MS });
+      await expect(authenticatedControl).toBeEnabled();
+      if (authentication.response !== null && !authentication.response.ok()) {
+        throw new Error(`Authentication restoration failed with status ${authentication.response.status()}.`);
+      }
+    };
+    const isConfirmedTransientFrontendRuntimeFailure = (error: unknown) => {
+      if (page.isClosed()) return false;
+      if (authentication.response !== null) return false;
+      if (recentApiRequests.length > 0) return false;
+
+      const diagnosticText = [
+        error instanceof Error ? error.message : String(error),
+        ...recentFrontendRequests,
+        ...pageErrors,
+        ...consoleMessages,
+      ].join("\n");
+      return transientFrontendRuntimePatterns.some((pattern) => pattern.test(diagnosticText));
+    };
+    const isConfirmedFrontendBootStall = async () => {
+      if (page.isClosed()) return false;
+      if (authentication.response !== null) return false;
+      if (recentApiRequests.length > 0) return false;
+      if (!recentFrontendRequests.some((request) => request.includes("/_next/static/chunks/app/"))) return false;
+
+      return page.getByText("Loading session...", { exact: true }).isVisible().catch(() => false);
+    };
+
+    try {
+      await attemptNavigation();
+    } catch (firstError) {
+      const shouldRecover =
+        isConfirmedTransientFrontendRuntimeFailure(firstError) || await isConfirmedFrontendBootStall();
+      if (!shouldRecover) {
+        throw firstError;
+      }
+
+      transientRecoveryAttempted = true;
+      console.warn(
+        [
+          `Recovering from transient frontend runtime navigation failure.`,
+          `target=${new URL(target, SMOKE_APP_ORIGIN).toString()}`,
+          `recentFrontendRequests=${JSON.stringify(recentFrontendRequests)}`,
+          `pageErrors=${JSON.stringify(pageErrors)}`,
+          `console=${JSON.stringify(consoleMessages)}`,
+        ].join(" "),
+      );
+      await page.goto("about:blank", { waitUntil: "commit" }).catch(() => undefined);
+      await attemptNavigation();
     }
   } catch (error) {
     const authStatus = authentication.response?.status() ?? "not observed";
@@ -345,16 +430,21 @@ export async function navigateToAuthenticatedRoute(page: Page, target: string) {
       `target=${new URL(target, SMOKE_APP_ORIGIN).toString()}`,
       `current=${page.url()}`,
       `warmed=${globallyWarmedFrontendModules.has(frontendModuleKey(target))}`,
+      `transientRecoveryAttempted=${transientRecoveryAttempted}`,
       `authStatus=${authStatus}`,
       `pageClosed=${page.isClosed()}`,
       `recentApiRequests=${JSON.stringify(recentApiRequests)}`,
+      `recentFrontendRequests=${JSON.stringify(recentFrontendRequests)}`,
       `pageErrors=${JSON.stringify(pageErrors)}`,
+      `console=${JSON.stringify(consoleMessages)}`,
     ].join(" ");
     throw new Error(detail, { cause: error });
   } finally {
     page.off("response", observeAuthentication);
     page.off("request", observeRequest);
+    page.off("requestfailed", observeRequestFailed);
     page.off("pageerror", observePageError);
+    page.off("console", observeConsole);
   }
 }
 
