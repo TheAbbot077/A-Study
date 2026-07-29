@@ -111,4 +111,4 @@ class InstitutionalLearningJourneyServiceTests(TestCase):
         self.assertEqual(payload["journey_type"], LearningJourneyType.INSTITUTIONAL)
         self.assertEqual(payload["state"], LearningJourneyStatus.SUBJECT_BINDING_REQUIRED)
         self.assertEqual(payload["blockers"][0]["code"], LearningJourneyBlockerCode.INSTITUTIONAL_ASSIGNMENT_REQUIRED)
-        self.assertIsNone(payload["authority"])
+        self.assertEqual(payload["authority"]["type"], "INSTITUTION")

@@ -96,6 +96,12 @@ class LearningJourneyViewSet(viewsets.ViewSet):
                 learner_id=serializer.validated_data["learner_id"],
                 institution_id=serializer.validated_data["institution_id"],
                 actor=request.user,
+                subject_id=serializer.validated_data.get("subject_id"),
+                curriculum_reference_id=serializer.validated_data.get("curriculum_reference_id"),
+                programme_label=serializer.validated_data.get("programme_label", ""),
+                course_label=serializer.validated_data.get("course_label", ""),
+                required_competency_ids=serializer.validated_data.get("required_competency_ids", []),
+                delivery_objectives=serializer.validated_data.get("delivery_objectives", {}),
             )
             return Response(self._get_service().execute(journey_id=journey.id, actor=request.user), status=status.HTTP_201_CREATED)
         except DjangoPermissionDenied as exc:

@@ -10,6 +10,12 @@ class CreateSelfStudyJourneySerializer(serializers.Serializer):
 class CreateInstitutionalJourneySerializer(serializers.Serializer):
     learner_id = serializers.UUIDField()
     institution_id = serializers.UUIDField()
+    subject_id = serializers.UUIDField(required=False)
+    curriculum_reference_id = serializers.UUIDField(required=False)
+    programme_label = serializers.CharField(max_length=255, allow_blank=True, required=False)
+    course_label = serializers.CharField(max_length=255, allow_blank=True, required=False)
+    required_competency_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
+    delivery_objectives = serializers.DictField(required=False)
 
 
 class JourneyVersionCommandSerializer(serializers.Serializer):
@@ -44,6 +50,7 @@ class LearningJourneyReadSerializer(serializers.Serializer):
     active_capabilities = serializers.DictField(required=False)
     progress = serializers.DictField(required=False)
     competency_context = serializers.DictField(required=False)
+    institutional_state = serializers.DictField(required=False, allow_null=True)
     version = serializers.IntegerField()
     last_synchronized_at = serializers.CharField(required=False, allow_null=True)
 

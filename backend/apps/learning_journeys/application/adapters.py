@@ -17,12 +17,15 @@ from apps.self_study.teaching_models import TeachingPreparationManifestStatus
 from apps.self_study.workspace_models import SelfStudyWorkspace, SelfStudyWorkspaceStatus
 
 from ..domain.enums import (
+    InstitutionalAssignmentState,
+    InstitutionalCompletionState,
     LearningJourneyActionCode,
     LearningJourneyBlockerCode,
     LearningJourneyStatus,
     LearningJourneyStatusReasonCode,
     LearningJourneyStepCode,
 )
+from ..domain.models import InstitutionalLearningAssignment
 from ..domain.value_objects import AvailableAction, CurrentStep, JourneyBlocker, JourneyProjection, StatusReason
 from .action_policy import build_action
 
@@ -499,8 +502,126 @@ class SelfStudyJourneyAdapter:
         }
 
 
+@dataclass(frozen=True)
 class InstitutionalJourneyAdapter:
+    assignment: InstitutionalLearningAssignment | None = None
+    membership: object | None = None
+
     def project(self) -> JourneyProjection:
+        if not self.assignment:
+            return self._blocked_projection()
+
+        refs = {
+            "institutional_assignment_id": str(self.assignment.id),
+            "institution_membership_id": str(self.assignment.membership_id),
+        }
+        subject = {"id": str(self.assignment.subject_id), "name": self.assignment.subject.name} if self.assignment.subject_id else None
+        authority = {
+            "type": "INSTITUTION",
+            "institution": self.assignment.institution.name,
+            "institution_id": str(self.assignment.institution_id),
+            "programme": self.assignment.programme_label,
+            "course": self.assignment.course_label,
+            "subject": self.assignment.subject.name if self.assignment.subject_id else "",
+            "curriculum": self.assignment.curriculum_reference.title if self.assignment.curriculum_reference_id else "",
+            "reference_id": str(self.assignment.curriculum_reference_id or ""),
+        }
+
+        if self.assignment.assignment_state == InstitutionalAssignmentState.WITHDRAWN:
+            return JourneyProjection(
+                status=LearningJourneyStatus.WITHDRAWN,
+                status_reason=StatusReason(code=LearningJourneyStatusReasonCode.WITHDRAWN_BY_LEARNER),
+                current_step=step(LearningJourneyStepCode.REVIEW_PROGRESS),
+                available_actions=(),
+                blockers=(),
+                capability_references=refs,
+                subject=subject,
+                authority=authority,
+            )
+
+        if self.assignment.completion_state == InstitutionalCompletionState.COMPLETED:
+            return JourneyProjection(
+                status=LearningJourneyStatus.LEARNING_GOAL_COMPLETED,
+                status_reason=StatusReason(code=LearningJourneyStatusReasonCode.GOAL_COMPLETED),
+                current_step=step(LearningJourneyStepCode.GOAL_COMPLETED),
+                available_actions=(action(LearningJourneyActionCode.SYNCHRONIZE),),
+                blockers=(),
+                capability_references=refs,
+                subject=subject,
+                authority=authority,
+            )
+
+        if not self.assignment.subject_id or not self.assignment.curriculum_reference_id:
+            return JourneyProjection(
+                status=LearningJourneyStatus.SUBJECT_BINDING_REQUIRED,
+                status_reason=StatusReason(code=LearningJourneyStatusReasonCode.INSTITUTIONAL_ASSIGNMENT_REQUIRED),
+                current_step=step(LearningJourneyStepCode.WAIT_FOR_SUBJECT_BINDING),
+                available_actions=(action(LearningJourneyActionCode.SYNCHRONIZE),),
+                blockers=(
+                    blocker(
+                        LearningJourneyBlockerCode.INSTITUTIONAL_ASSIGNMENT_REQUIRED,
+                        category="institutional_authority",
+                        message="Institutional assignment is required before this journey can continue.",
+                        capability="institutional.assignment",
+                        recoverable=False,
+                    ),
+                ),
+                capability_references=refs,
+                subject=subject,
+                authority=authority,
+            )
+
+        if self.assignment.assignment_state == InstitutionalAssignmentState.INTERVENTION_REQUIRED:
+            return JourneyProjection(
+                status=LearningJourneyStatus.LEARNING_BLOCKED,
+                status_reason=StatusReason(code=LearningJourneyStatusReasonCode.ACTIVE_REMEDIATION),
+                current_step=step(LearningJourneyStepCode.RESOLVE_BLOCKER),
+                available_actions=(action(LearningJourneyActionCode.SYNCHRONIZE),),
+                blockers=(
+                    blocker(
+                        LearningJourneyBlockerCode.ACTIVE_REMEDIATION_REQUIRED,
+                        category="institutional_intervention",
+                        message="An institutional intervention recommendation is open for this journey.",
+                        capability="institutional.intervention",
+                        recoverable=True,
+                    ),
+                ),
+                capability_references=refs,
+                subject=subject,
+                authority=authority,
+            )
+
+        if self.assignment.completion_state == InstitutionalCompletionState.READY:
+            return JourneyProjection(
+                status=LearningJourneyStatus.LEARNING_ACTIVE,
+                status_reason=StatusReason(code=LearningJourneyStatusReasonCode.LEARNING_PLAN_REQUIRED),
+                current_step=step(LearningJourneyStepCode.REVIEW_PROGRESS),
+                available_actions=(action(LearningJourneyActionCode.SYNCHRONIZE),),
+                blockers=(),
+                capability_references=refs,
+                subject=subject,
+                authority=authority,
+            )
+
+        return JourneyProjection(
+            status=LearningJourneyStatus.LEARNING_ACTIVE,
+            status_reason=StatusReason(code=LearningJourneyStatusReasonCode.LEARNING_PLAN_REQUIRED),
+            current_step=step(LearningJourneyStepCode.BEGIN_LEARNING),
+            available_actions=(
+                action(
+                    LearningJourneyActionCode.BEGIN_TEACHING_SESSION,
+                    enabled=False,
+                    disabled_reason="Institutional teaching uses the shared teaching runtime and must be prepared by the existing teaching services.",
+                ),
+                action(LearningJourneyActionCode.SYNCHRONIZE),
+            ),
+            blockers=(),
+            capability_references=refs,
+            subject=subject,
+            authority=authority,
+        )
+
+    def _blocked_projection(self) -> JourneyProjection:
         return JourneyProjection(
             status=LearningJourneyStatus.SUBJECT_BINDING_REQUIRED,
             status_reason=StatusReason(code=LearningJourneyStatusReasonCode.INSTITUTIONAL_ASSIGNMENT_REQUIRED),
@@ -511,7 +632,7 @@ class InstitutionalJourneyAdapter:
                     LearningJourneyBlockerCode.INSTITUTIONAL_ASSIGNMENT_REQUIRED,
                     category="institutional_authority",
                     message="Institutional assignment is required before this journey can continue.",
-                    capability="institutions.assignment",
+                    capability="institutional.assignment",
                     recoverable=False,
                 ),
             ),

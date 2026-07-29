@@ -8,6 +8,12 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .enums import (
+    InstitutionalAcceptanceMode,
+    InstitutionalAssignmentState,
+    InstitutionalCompletionState,
+    InstitutionalInterventionReason,
+    InstitutionalInterventionSeverity,
+    InstitutionalInterventionStatus,
     LearningCompetencyProgressReason,
     LearningCompetencyProgressState,
     LearningCompetencyUnlockState,
@@ -424,3 +430,135 @@ class LearningCompetencyProgressHistory(models.Model):
         if self.pk and type(self).objects.filter(pk=self.pk).exists():
             raise ValidationError("Competency progress history is append-only.", code="COMPETENCY_HISTORY_APPEND_ONLY")
         return super().save(*args, **kwargs)
+
+
+class InstitutionalLearningAssignment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    journey = models.OneToOneField(LearningJourney, on_delete=models.PROTECT, related_name="institutional_assignment")
+    institution = models.ForeignKey("users.Institution", on_delete=models.PROTECT, related_name="learning_assignments")
+    membership = models.ForeignKey("users.InstitutionMembership", on_delete=models.PROTECT, related_name="learning_assignments")
+    learner = models.ForeignKey("users.User", on_delete=models.PROTECT, related_name="institutional_learning_assignments")
+    subject = models.ForeignKey("academic.Subject", null=True, blank=True, on_delete=models.PROTECT, related_name="institutional_learning_assignments")
+    curriculum_reference = models.ForeignKey(
+        "self_study.CurriculumReference",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="institutional_learning_assignments",
+    )
+    assigned_by = models.ForeignKey("users.User", on_delete=models.PROTECT, related_name="created_institutional_learning_assignments")
+    assignment_state = models.CharField(max_length=32, choices=InstitutionalAssignmentState.choices, default=InstitutionalAssignmentState.ASSIGNED)
+    acceptance_mode = models.CharField(max_length=40, choices=InstitutionalAcceptanceMode.choices, default=InstitutionalAcceptanceMode.AUTO_ACCEPT)
+    completion_state = models.CharField(max_length=24, choices=InstitutionalCompletionState.choices, default=InstitutionalCompletionState.PENDING)
+    programme_label = models.CharField(max_length=255, blank=True)
+    course_label = models.CharField(max_length=255, blank=True)
+    delivery_objectives = models.JSONField(default=dict, blank=True)
+    required_competency_ids = models.JSONField(default=list, blank=True)
+    visibility_policy = models.JSONField(default=dict, blank=True)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "institutional_learning_assignment"
+        indexes = [
+            models.Index(fields=["institution", "assignment_state"], name="ila_institution_state_idx"),
+            models.Index(fields=["learner", "assignment_state"], name="ila_learner_state_idx"),
+            models.Index(fields=["journey", "completion_state"], name="ila_journey_completion_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.membership_id and self.learner_id and self.membership.user_id != self.learner_id:
+            raise ValidationError("Assignment membership must belong to the learner.", code="INSTITUTIONAL_ASSIGNMENT_INVALID")
+        if self.membership_id and self.institution_id and self.membership.institution_id != self.institution_id:
+            raise ValidationError("Assignment membership must belong to the institution.", code="INSTITUTIONAL_ASSIGNMENT_INVALID")
+        if self.subject_id and self.institution_id and self.subject.institution_id != self.institution_id:
+            raise ValidationError("Assignment subject must belong to the institution.", code="INSTITUTIONAL_ASSIGNMENT_INVALID")
+        if self.journey_id and self.learner_id and self.journey.learner_id != self.learner_id:
+            raise ValidationError("Assignment journey must belong to the learner.", code="INSTITUTIONAL_ASSIGNMENT_INVALID")
+        if self.journey_id and self.institution_id and self.journey.institution_id != self.institution_id:
+            raise ValidationError("Assignment journey must belong to the institution.", code="INSTITUTIONAL_ASSIGNMENT_INVALID")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def activate_if_allowed(self, *, when=None) -> bool:
+        if self.assignment_state == InstitutionalAssignmentState.ACTIVE:
+            return False
+        if self.acceptance_mode == InstitutionalAcceptanceMode.AUTO_ACCEPT and not self.accepted_at:
+            self.accepted_at = when or timezone.now()
+        if self.acceptance_mode != InstitutionalAcceptanceMode.AUTO_ACCEPT and not self.accepted_at:
+            return False
+        self.assignment_state = InstitutionalAssignmentState.ACTIVE
+        self.activated_at = self.activated_at or when or timezone.now()
+        self.version += 1
+        return True
+
+    def mark_completion_ready(self, *, when=None) -> bool:
+        if self.completion_state == InstitutionalCompletionState.READY:
+            return False
+        self.assignment_state = InstitutionalAssignmentState.COMPLETION_PENDING
+        self.completion_state = InstitutionalCompletionState.READY
+        self.version += 1
+        return True
+
+    def mark_completed(self, *, when=None) -> bool:
+        if self.completion_state == InstitutionalCompletionState.COMPLETED:
+            return False
+        now = when or timezone.now()
+        self.assignment_state = InstitutionalAssignmentState.COMPLETED
+        self.completion_state = InstitutionalCompletionState.COMPLETED
+        self.completed_at = now
+        self.version += 1
+        return True
+
+
+class InstitutionalInterventionRecommendation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    journey = models.ForeignKey(LearningJourney, on_delete=models.PROTECT, related_name="institutional_interventions")
+    assignment = models.ForeignKey(InstitutionalLearningAssignment, on_delete=models.PROTECT, related_name="interventions")
+    institution = models.ForeignKey("users.Institution", on_delete=models.PROTECT, related_name="learning_interventions")
+    learner = models.ForeignKey("users.User", on_delete=models.PROTECT, related_name="institutional_learning_interventions")
+    triggering_progress = models.ForeignKey(
+        LearningCompetencyProgress,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="institutional_interventions",
+    )
+    reason = models.CharField(max_length=48, choices=InstitutionalInterventionReason.choices)
+    severity = models.CharField(max_length=16, choices=InstitutionalInterventionSeverity.choices, default=InstitutionalInterventionSeverity.MEDIUM)
+    recommended_action = models.CharField(max_length=500)
+    status = models.CharField(max_length=24, choices=InstitutionalInterventionStatus.choices, default=InstitutionalInterventionStatus.OPEN)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="resolved_institutional_learning_interventions",
+    )
+
+    class Meta:
+        db_table = "institutional_intervention_recommendation"
+        indexes = [
+            models.Index(fields=["institution", "status"], name="iir_institution_status_idx"),
+            models.Index(fields=["journey", "reason"], name="iir_journey_reason_idx"),
+        ]
+
+    def resolve(self, *, actor, status: str = InstitutionalInterventionStatus.RESOLVED, when=None) -> bool:
+        if self.status in {InstitutionalInterventionStatus.RESOLVED, InstitutionalInterventionStatus.DISMISSED}:
+            return False
+        self.status = status
+        self.resolved_at = when or timezone.now()
+        self.resolved_by = actor
+        return True

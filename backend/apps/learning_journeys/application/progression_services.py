@@ -132,6 +132,7 @@ class CompetencyProgressionService:
         )
         self._publish_progress_event(progress)
         unlocked = self.unlock_downstream(journey=journey, competency=competency, actor=actor)
+        self._evaluate_institutional_intervention(progress=progress, actor=actor)
         JourneyEvolutionService(events=self.events).evolve_after_progress(progress=progress, unlocked=unlocked, actor=actor)
         return progress
 
@@ -261,6 +262,13 @@ class CompetencyProgressionService:
                 },
             )
         )
+
+    def _evaluate_institutional_intervention(self, *, progress: LearningCompetencyProgress, actor: User | None = None):
+        if progress.journey.journey_type != "INSTITUTIONAL":
+            return None
+        from .institutional_services import InstitutionalInterventionService
+
+        return InstitutionalInterventionService(events=self.events).evaluate_for_progress(progress=progress, actor=actor)
 
 
 class JourneyEvolutionService:

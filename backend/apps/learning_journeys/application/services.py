@@ -13,17 +13,20 @@ from ..domain.enums import (
     LearningJourneySourceType,
     LearningJourneyStatus,
     LearningJourneyStatusReasonCode,
+    LearningJourneyStepCode,
     LearningJourneySubjectBindingSource,
     LearningJourneySubjectBindingStatus,
     LearningJourneyType,
 )
 from ..domain.models import (
+    InstitutionalLearningAssignment,
     LearningJourney,
     LearningJourneyCapabilityReferences,
     LearningJourneySourceBinding,
     LearningJourneySubjectBinding,
 )
 from .adapters import InstitutionalJourneyAdapter, SelfStudyJourneyAdapter
+from .authority import INSTITUTION_STAFF_ROLES, JourneyAuthorityResolver
 
 
 def _publish(events: EventPublisher, name: str, journey: LearningJourney, extra: dict | None = None):
@@ -41,21 +44,19 @@ def _publish(events: EventPublisher, name: str, journey: LearningJourney, extra:
 
 
 def can_read_journey(actor: User, journey: LearningJourney) -> bool:
-    if actor.is_superuser or actor.id == journey.learner_id:
-        return True
-    if journey.institution_id:
-        return InstitutionMembership.objects.filter(
-            user=actor,
-            institution_id=journey.institution_id,
-            is_active=True,
-            role__in=[
-                InstitutionRole.ADMINISTRATOR,
-                InstitutionRole.INSTITUTION_OWNER,
-                InstitutionRole.SYSTEM_ADMINISTRATOR,
-                InstitutionRole.TEACHER,
-            ],
-        ).exists()
-    return False
+    try:
+        return JourneyAuthorityResolver().provider_for(journey=journey).can_read(actor=actor, journey=journey)
+    except Exception:
+        if actor.is_superuser or actor.id == journey.learner_id:
+            return True
+        if journey.institution_id:
+            return InstitutionMembership.objects.filter(
+                user=actor,
+                institution_id=journey.institution_id,
+                is_active=True,
+                role__in=INSTITUTION_STAFF_ROLES,
+            ).exists()
+        return False
 
 
 class CreateLearningJourneyService:
@@ -89,7 +90,19 @@ class CreateLearningJourneyService:
         return SynchronizeLearningJourneyService(events=self.events).execute(journey_id=journey.id, actor=actor)
 
     @transaction.atomic
-    def for_institutional_membership(self, *, learner_id, institution_id, actor: User) -> LearningJourney:
+    def for_institutional_membership(
+        self,
+        *,
+        learner_id,
+        institution_id,
+        actor: User,
+        subject_id=None,
+        curriculum_reference_id=None,
+        programme_label: str = "",
+        course_label: str = "",
+        required_competency_ids: list | None = None,
+        delivery_objectives: dict | None = None,
+    ) -> LearningJourney:
         institution = Institution.objects.get(id=institution_id, is_active=True)
         if not actor.is_superuser and not InstitutionMembership.objects.filter(
             user=actor,
@@ -105,26 +118,49 @@ class CreateLearningJourneyService:
         membership = InstitutionMembership.objects.filter(user_id=learner_id, institution=institution, is_active=True).first()
         if not membership:
             raise ValidationError("Institutional journey requires active learner membership.", code="INSTITUTIONAL_MEMBERSHIP_REQUIRED")
-        existing = LearningJourneySourceBinding.objects.select_related("journey").filter(
-            source_type=LearningJourneySourceType.INSTITUTION_MEMBERSHIP,
-            source_id=membership.id,
-        ).first()
+        existing_assignments = InstitutionalLearningAssignment.objects.select_related("journey").filter(membership=membership)
+        if subject_id or curriculum_reference_id:
+            existing_assignments = existing_assignments.filter(subject_id=subject_id, curriculum_reference_id=curriculum_reference_id)
+        existing_assignment = existing_assignments.first()
+        if existing_assignment:
+            return SynchronizeLearningJourneyService(events=self.events).execute(journey_id=existing_assignment.journey_id, actor=actor)
+        existing = LearningJourneySourceBinding.objects.select_related("journey").filter(source_type=LearningJourneySourceType.INSTITUTION_MEMBERSHIP, source_id=membership.id).first()
         if existing:
             return SynchronizeLearningJourneyService(events=self.events).execute(journey_id=existing.journey_id, actor=actor)
+        has_assignment_authority = bool(subject_id and curriculum_reference_id)
         journey = LearningJourney.objects.create(
             learner_id=learner_id,
             journey_type=LearningJourneyType.INSTITUTIONAL,
             institution=institution,
-            status=LearningJourneyStatus.SUBJECT_BINDING_REQUIRED,
-            status_reason_code=LearningJourneyStatusReasonCode.INSTITUTIONAL_ASSIGNMENT_REQUIRED,
+            status=LearningJourneyStatus.LEARNING_ACTIVE if has_assignment_authority else LearningJourneyStatus.SUBJECT_BINDING_REQUIRED,
+            status_reason_code=LearningJourneyStatusReasonCode.LEARNING_PLAN_REQUIRED
+            if has_assignment_authority
+            else LearningJourneyStatusReasonCode.INSTITUTIONAL_ASSIGNMENT_REQUIRED,
+            current_step_code=LearningJourneyStepCode.BEGIN_LEARNING if has_assignment_authority else LearningJourneyStepCode.WAIT_FOR_SUBJECT_BINDING,
         )
-        LearningJourneySourceBinding.objects.create(
+        assignment = InstitutionalLearningAssignment.objects.create(
             journey=journey,
-            source_type=LearningJourneySourceType.INSTITUTION_MEMBERSHIP,
-            source_id=membership.id,
+            institution=institution,
+            membership=membership,
+            learner_id=learner_id,
+            subject_id=subject_id,
+            curriculum_reference_id=curriculum_reference_id,
+            assigned_by=actor,
+            programme_label=programme_label,
+            course_label=course_label,
+            required_competency_ids=[str(item) for item in (required_competency_ids or [])],
+            delivery_objectives=delivery_objectives or {},
         )
+        assignment.activate_if_allowed()
+        assignment.save()
+        LearningJourneySourceBinding.objects.create(journey=journey, source_type=LearningJourneySourceType.INSTITUTIONAL_ASSIGNMENT, source_id=assignment.id)
         LearningJourneyCapabilityReferences.objects.create(journey=journey)
         transaction.on_commit(lambda: _publish(self.events, "learning_journey.created", journey))
+        transaction.on_commit(lambda: _publish(self.events, "institutional_journey.assigned", journey, {"assignment_id": str(assignment.id)}))
+        if assignment.accepted_at:
+            transaction.on_commit(lambda: _publish(self.events, "institutional_journey.accepted", journey, {"assignment_id": str(assignment.id)}))
+        transaction.on_commit(lambda: _publish(self.events, "institutional_journey.activated", journey, {"assignment_id": str(assignment.id)}))
+        transaction.on_commit(lambda: _publish(self.events, "institutional_authority.updated", journey, {"assignment_id": str(assignment.id)}))
         return SynchronizeLearningJourneyService(events=self.events).execute(journey_id=journey.id, actor=actor)
 
 
@@ -194,8 +230,27 @@ class SynchronizeLearningJourneyService:
                 "active_teaching_session",
             ).get(id=binding.source_id)
             return SelfStudyJourneyAdapter(workspace=workspace).project()
+        if binding.source_type == LearningJourneySourceType.INSTITUTIONAL_ASSIGNMENT:
+            assignment = InstitutionalLearningAssignment.objects.select_related(
+                "institution",
+                "membership",
+                "learner",
+                "subject",
+                "curriculum_reference",
+                "journey",
+            ).get(id=binding.source_id)
+            return InstitutionalJourneyAdapter(assignment=assignment).project()
         if binding.source_type == LearningJourneySourceType.INSTITUTION_MEMBERSHIP:
-            return InstitutionalJourneyAdapter().project()
+            membership = InstitutionMembership.objects.select_related("institution", "user").get(id=binding.source_id)
+            assignment = InstitutionalLearningAssignment.objects.select_related(
+                "institution",
+                "membership",
+                "learner",
+                "subject",
+                "curriculum_reference",
+                "journey",
+            ).filter(membership=membership).first()
+            return InstitutionalJourneyAdapter(assignment=assignment, membership=membership).project()
         raise ValidationError("Unsupported journey source binding.", code="LEARNING_JOURNEY_SOURCE_UNSUPPORTED")
 
     def _sync_subject_binding(self, *, journey: LearningJourney, projection) -> None:
@@ -215,7 +270,9 @@ class SynchronizeLearningJourneyService:
             journey=journey,
             subject_id=subject_id,
             curriculum_reference_id=curriculum_reference_id or None,
-            binding_source=LearningJourneySubjectBindingSource.SELF_STUDY_CURRICULUM_RESOLUTION,
+            binding_source=LearningJourneySubjectBindingSource.INSTITUTIONAL_ASSIGNMENT
+            if journey.journey_type == LearningJourneyType.INSTITUTIONAL
+            else LearningJourneySubjectBindingSource.SELF_STUDY_CURRICULUM_RESOLUTION,
             status=LearningJourneySubjectBindingStatus.ACTIVE,
         )
 

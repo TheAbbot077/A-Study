@@ -1,4 +1,11 @@
 from .action_policy import SelfStudyJourneyActionPolicy
+from .authority import InstitutionAuthorityProvider, JourneyAuthorityResolver, SelfStudyAuthorityProvider
+from .institutional_services import (
+    InstitutionalCompletionService,
+    InstitutionalInterventionService,
+    InstitutionalJourneyVisibilityPolicy,
+    InstitutionalLearningPlanEvolutionService,
+)
 from .orchestration import SelfStudyJourneyOrchestrator
 from .progression_policy import CompetencyProgressionPolicy
 from .progression_services import (
@@ -18,11 +25,18 @@ __all__ = [
     "CompetencyUnlockPolicy",
     "CreateLearningJourneyService",
     "GetLearningJourneyService",
+    "InstitutionAuthorityProvider",
+    "InstitutionalCompletionService",
+    "InstitutionalInterventionService",
+    "InstitutionalJourneyVisibilityPolicy",
+    "InstitutionalLearningPlanEvolutionService",
+    "JourneyAuthorityResolver",
     "JourneyEvolutionService",
     "LearningJourneyLifecycleService",
     "LearningPlanEvolutionService",
     "ListLearnerJourneysService",
     "SelfStudyJourneyActionPolicy",
     "SelfStudyJourneyOrchestrator",
+    "SelfStudyAuthorityProvider",
     "SynchronizeLearningJourneyService",
 ]

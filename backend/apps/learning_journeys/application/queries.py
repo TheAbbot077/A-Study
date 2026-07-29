@@ -5,7 +5,7 @@ from django.core.exceptions import PermissionDenied
 from apps.users.domain.models import InstitutionMembership, InstitutionRole
 
 from ..domain.enums import LearningCompetencyProgressState, LearningCompetencyUnlockState, LearningJourneySourceType
-from ..domain.models import LearningCompetencyProgress, LearningJourney, LearningJourneySourceBinding
+from ..domain.models import InstitutionalLearningAssignment, LearningCompetencyProgress, LearningJourney, LearningJourneySourceBinding
 from .adapters import InstitutionalJourneyAdapter, SelfStudyJourneyAdapter
 from .services import can_read_journey
 
@@ -50,6 +50,7 @@ class LearningJourneyReadPresenter:
             "active_capabilities": self._active_capabilities(projection.capability_references),
             "progress": self._progress(state),
             "competency_context": self._competency_context(journey),
+            "institutional_state": self._institutional_state(journey),
             "version": journey.version,
             "last_synchronized_at": journey.last_synchronized_at.isoformat() if journey.last_synchronized_at else None,
         }
@@ -134,6 +135,22 @@ class LearningJourneyReadPresenter:
             "unlock_state": row.unlock_state,
         }
 
+    def _institutional_state(self, journey: LearningJourney) -> dict | None:
+        assignment = InstitutionalLearningAssignment.objects.select_related("institution", "subject", "curriculum_reference").filter(journey=journey).first()
+        if not assignment:
+            return None
+        return {
+            "assignment": assignment.assignment_state,
+            "completion": assignment.completion_state,
+            "institution": {"id": str(assignment.institution_id), "name": assignment.institution.name},
+            "programme": assignment.programme_label,
+            "course": assignment.course_label,
+            "subject": {"id": str(assignment.subject_id), "name": assignment.subject.name} if assignment.subject_id else None,
+            "curriculum": {"id": str(assignment.curriculum_reference_id), "title": assignment.curriculum_reference.title}
+            if assignment.curriculum_reference_id
+            else None,
+        }
+
     def _projection(self, journey: LearningJourney):
         binding = journey.source_bindings.first()
         if not binding:
@@ -152,6 +169,27 @@ class LearningJourneyReadPresenter:
                 "active_teaching_session",
             ).get(id=binding.source_id)
             return SelfStudyJourneyAdapter(workspace=workspace).project()
+        if binding.source_type == LearningJourneySourceType.INSTITUTIONAL_ASSIGNMENT:
+            assignment = InstitutionalLearningAssignment.objects.select_related(
+                "institution",
+                "membership",
+                "learner",
+                "subject",
+                "curriculum_reference",
+                "journey",
+            ).get(id=binding.source_id)
+            return InstitutionalJourneyAdapter(assignment=assignment).project()
+        if binding.source_type == LearningJourneySourceType.INSTITUTION_MEMBERSHIP:
+            membership = InstitutionMembership.objects.select_related("institution", "user").get(id=binding.source_id)
+            assignment = InstitutionalLearningAssignment.objects.select_related(
+                "institution",
+                "membership",
+                "learner",
+                "subject",
+                "curriculum_reference",
+                "journey",
+            ).filter(membership=membership).first()
+            return InstitutionalJourneyAdapter(assignment=assignment, membership=membership).project()
         return InstitutionalJourneyAdapter().project()
 
 

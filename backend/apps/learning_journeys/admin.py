@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from django.contrib import admin, messages
 
+from .application.institutional_services import InstitutionalCompletionService, InstitutionalInterventionService
 from .application.services import LearningJourneyLifecycleService, SynchronizeLearningJourneyService
 from .domain.models import (
+    InstitutionalInterventionRecommendation,
+    InstitutionalLearningAssignment,
     LearningCompetencyProgress,
     LearningCompetencyProgressHistory,
     LearningJourney,
@@ -213,3 +216,94 @@ class LearningCompetencyProgressHistoryAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+@admin.register(InstitutionalLearningAssignment)
+class InstitutionalLearningAssignmentAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "journey",
+        "institution",
+        "learner",
+        "subject",
+        "assignment_state",
+        "completion_state",
+        "updated_at",
+    )
+    list_filter = ("assignment_state", "completion_state", "acceptance_mode", "institution")
+    search_fields = ("id", "journey__id", "learner__email", "institution__name", "programme_label", "course_label")
+    readonly_fields = [field.name for field in InstitutionalLearningAssignment._meta.fields]
+    actions = ["synchronize_journeys", "evaluate_completion", "generate_intervention_recommendations"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def synchronize_journeys(self, request, queryset):
+        service = SynchronizeLearningJourneyService()
+        success = 0
+        for assignment in queryset:
+            try:
+                service.execute(journey_id=assignment.journey_id, actor=request.user)
+                success += 1
+            except Exception as exc:  # pragma: no cover - admin feedback path
+                self.message_user(request, f"{assignment.id}: {exc}", level=messages.ERROR)
+        self.message_user(request, f"Synchronized {success} institutional journey(s).", level=messages.SUCCESS)
+
+    synchronize_journeys.short_description = "Synchronize journey"
+
+    def evaluate_completion(self, request, queryset):
+        service = InstitutionalCompletionService()
+        success = 0
+        for assignment in queryset:
+            try:
+                service.evaluate(journey_id=assignment.journey_id, actor=request.user)
+                success += 1
+            except Exception as exc:  # pragma: no cover - admin feedback path
+                self.message_user(request, f"{assignment.id}: {exc}", level=messages.ERROR)
+        self.message_user(request, f"Evaluated completion for {success} assignment(s).", level=messages.SUCCESS)
+
+    evaluate_completion.short_description = "Evaluate completion"
+
+    def generate_intervention_recommendations(self, request, queryset):
+        service = InstitutionalInterventionService()
+        success = 0
+        for assignment in queryset:
+            for progress in assignment.journey.competency_progress.all():
+                if service.evaluate_for_progress(progress=progress, actor=request.user):
+                    success += 1
+        self.message_user(request, f"Generated or found {success} intervention recommendation(s).", level=messages.SUCCESS)
+
+    generate_intervention_recommendations.short_description = "Generate intervention recommendations"
+
+
+@admin.register(InstitutionalInterventionRecommendation)
+class InstitutionalInterventionRecommendationAdmin(admin.ModelAdmin):
+    list_display = ("id", "journey", "institution", "learner", "reason", "severity", "status", "created_at", "resolved_at")
+    list_filter = ("reason", "severity", "status", "institution")
+    search_fields = ("id", "journey__id", "learner__email", "institution__name", "recommended_action")
+    readonly_fields = [field.name for field in InstitutionalInterventionRecommendation._meta.fields]
+    actions = ["resolve_recommendations", "dismiss_recommendations"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def resolve_recommendations(self, request, queryset):
+        self._resolve(request, queryset, "RESOLVED")
+
+    resolve_recommendations.short_description = "Resolve recommendations"
+
+    def dismiss_recommendations(self, request, queryset):
+        self._resolve(request, queryset, "DISMISSED")
+
+    dismiss_recommendations.short_description = "Dismiss recommendations"
+
+    def _resolve(self, request, queryset, status: str):
+        service = InstitutionalInterventionService()
+        success = 0
+        for recommendation in queryset:
+            try:
+                service.resolve(recommendation_id=recommendation.id, actor=request.user, status=status)
+                success += 1
+            except Exception as exc:  # pragma: no cover - admin feedback path
+                self.message_user(request, f"{recommendation.id}: {exc}", level=messages.ERROR)
+        self.message_user(request, f"{status.title()} {success} recommendation(s).", level=messages.SUCCESS)

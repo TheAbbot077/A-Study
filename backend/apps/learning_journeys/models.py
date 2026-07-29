@@ -1,4 +1,6 @@
 from apps.learning_journeys.domain.models import (
+    InstitutionalInterventionRecommendation,
+    InstitutionalLearningAssignment,
     LearningJourney,
     LearningJourneyActionReceipt,
     LearningJourneyCapabilityReferences,
@@ -10,6 +12,8 @@ from apps.learning_journeys.domain.models import (
 
 __all__ = [
     "LearningJourney",
+    "InstitutionalInterventionRecommendation",
+    "InstitutionalLearningAssignment",
     "LearningJourneyActionReceipt",
     "LearningJourneyCapabilityReferences",
     "LearningJourneySourceBinding",

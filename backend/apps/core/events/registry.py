@@ -357,5 +357,13 @@ for event_name in [
     "learning_competency.superseded",
     "journey.evolved",
     "learning_plan.evolution_requested",
+    "institutional_journey.assigned",
+    "institutional_journey.accepted",
+    "institutional_journey.activated",
+    "institutional_intervention.created",
+    "institutional_intervention.resolved",
+    "institutional_completion.ready",
+    "institutional_completion.completed",
+    "institutional_authority.updated",
 ]:
     default_event_registry._subscribers.setdefault(event_name, [])

@@ -56,6 +56,7 @@ class LearningJourneyStatusReasonCode(models.TextChoices):
 class LearningJourneySourceType(models.TextChoices):
     SELF_STUDY_WORKSPACE = "SELF_STUDY_WORKSPACE", "Self-study workspace"
     INSTITUTION_MEMBERSHIP = "INSTITUTION_MEMBERSHIP", "Institution membership"
+    INSTITUTIONAL_ASSIGNMENT = "INSTITUTIONAL_ASSIGNMENT", "Institutional assignment"
 
 
 class LearningJourneySubjectBindingSource(models.TextChoices):
@@ -164,3 +165,53 @@ class LearningCompetencyProgressReason(models.TextChoices):
     REGRESSION_EVIDENCE = "REGRESSION_EVIDENCE", "Regression evidence"
     CURRICULUM_SUPERSEDED = "CURRICULUM_SUPERSEDED", "Curriculum superseded"
     UNCHANGED = "UNCHANGED", "Unchanged"
+
+
+class JourneyAuthorityProviderType(models.TextChoices):
+    SELF_STUDY = "SELF_STUDY", "Self-study"
+    INSTITUTION = "INSTITUTION", "Institution"
+
+
+class InstitutionalAssignmentState(models.TextChoices):
+    ASSIGNED = "ASSIGNED", "Assigned"
+    ACCEPTED = "ACCEPTED", "Accepted"
+    ACTIVE = "ACTIVE", "Active"
+    ON_HOLD = "ON_HOLD", "On hold"
+    INTERVENTION_REQUIRED = "INTERVENTION_REQUIRED", "Intervention required"
+    COMPLETION_PENDING = "COMPLETION_PENDING", "Completion pending"
+    COMPLETED = "COMPLETED", "Completed"
+    WITHDRAWN = "WITHDRAWN", "Withdrawn"
+
+
+class InstitutionalAcceptanceMode(models.TextChoices):
+    AUTO_ACCEPT = "AUTO_ACCEPT", "Auto accept"
+    LEARNER_CONFIRMATION_REQUIRED = "LEARNER_CONFIRMATION_REQUIRED", "Learner confirmation required"
+    ADMIN_CONFIRMATION_REQUIRED = "ADMIN_CONFIRMATION_REQUIRED", "Admin confirmation required"
+
+
+class InstitutionalCompletionState(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    READY = "READY", "Ready"
+    COMPLETED = "COMPLETED", "Completed"
+    BLOCKED = "BLOCKED", "Blocked"
+
+
+class InstitutionalInterventionReason(models.TextChoices):
+    REPEATED_REVIEW_REQUIRED = "REPEATED_REVIEW_REQUIRED", "Repeated review required"
+    PERSISTENT_REGRESSION = "PERSISTENT_REGRESSION", "Persistent regression"
+    REQUIRED_COMPETENCY_OVERDUE = "REQUIRED_COMPETENCY_OVERDUE", "Required competency overdue"
+    LEARNING_INACTIVITY = "LEARNING_INACTIVITY", "Learning inactivity"
+
+
+class InstitutionalInterventionSeverity(models.TextChoices):
+    LOW = "LOW", "Low"
+    MEDIUM = "MEDIUM", "Medium"
+    HIGH = "HIGH", "High"
+
+
+class InstitutionalInterventionStatus(models.TextChoices):
+    OPEN = "OPEN", "Open"
+    ACKNOWLEDGED = "ACKNOWLEDGED", "Acknowledged"
+    IN_PROGRESS = "IN_PROGRESS", "In progress"
+    RESOLVED = "RESOLVED", "Resolved"
+    DISMISSED = "DISMISSED", "Dismissed"
