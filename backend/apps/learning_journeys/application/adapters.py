@@ -24,6 +24,7 @@ from ..domain.enums import (
     LearningJourneyStepCode,
 )
 from ..domain.value_objects import AvailableAction, CurrentStep, JourneyBlocker, JourneyProjection, StatusReason
+from .action_policy import build_action
 
 
 STEP_COPY = {
@@ -44,41 +45,13 @@ STEP_COPY = {
 }
 
 
-ACTION_COPY = {
-    LearningJourneyActionCode.BEGIN_GOAL_DISCOVERY: "Get started",
-    LearningJourneyActionCode.CONTINUE_GOAL_DISCOVERY: "Continue setup",
-    LearningJourneyActionCode.CONFIRM_INTENT: "Confirm goal",
-    LearningJourneyActionCode.RETRY_CURRICULUM_RESOLUTION: "Try curriculum search again",
-    LearningJourneyActionCode.SELECT_CURRICULUM: "Select curriculum",
-    LearningJourneyActionCode.BEGIN_DIAGNOSTIC: "Begin diagnostic",
-    LearningJourneyActionCode.CONTINUE_DIAGNOSTIC: "Continue diagnostic",
-    LearningJourneyActionCode.GENERATE_BRIDGE_PLAN: "Prepare bridge plan",
-    LearningJourneyActionCode.GENERATE_LEARNING_PLAN: "Create study plan",
-    LearningJourneyActionCode.ACTIVATE_LEARNING_PLAN: "Activate plan",
-    LearningJourneyActionCode.BEGIN_TEACHING_SESSION: "Begin teaching session",
-    LearningJourneyActionCode.CONTINUE_TEACHING_SESSION: "Continue teaching session",
-    LearningJourneyActionCode.RETRY_BLOCKED_STEP: "Try again",
-    LearningJourneyActionCode.PAUSE_JOURNEY: "Pause journey",
-    LearningJourneyActionCode.RESUME_JOURNEY: "Resume journey",
-    LearningJourneyActionCode.WITHDRAW_JOURNEY: "Withdraw journey",
-    LearningJourneyActionCode.SYNCHRONIZE: "Refresh journey",
-}
-
-
 def step(code: str) -> CurrentStep:
     title, description, sequence = STEP_COPY[code]
     return CurrentStep(code=code, title=title, description=description, sequence=sequence)
 
 
 def action(code: str, *, enabled: bool = True, disabled_reason: str = "", requires_confirmation: bool = False) -> AvailableAction:
-    return AvailableAction(
-        code=code,
-        label=ACTION_COPY[code],
-        endpoint_name=f"learning-journey-action-{code.lower().replace('_', '-')}",
-        enabled=enabled,
-        disabled_reason=disabled_reason,
-        requires_confirmation=requires_confirmation,
-    )
+    return build_action(code, enabled=enabled, disabled_reason=disabled_reason, requires_confirmation=requires_confirmation)
 
 
 def blocker(
@@ -278,7 +251,13 @@ class SelfStudyJourneyAdapter:
                 LearningJourneyStatusReasonCode.LEARNING_PLAN_REQUIRED,
                 LearningJourneyStepCode.CREATE_LEARNING_PLAN,
                 refs,
-                actions=(action(LearningJourneyActionCode.GENERATE_LEARNING_PLAN),),
+                actions=(
+                    action(
+                        LearningJourneyActionCode.GENERATE_LEARNING_PLAN,
+                        enabled=False,
+                        disabled_reason="Learning plan generation is represented by the existing bridge-plan and teaching-readiness capabilities.",
+                    ),
+                ),
                 subject=subject,
                 authority=authority,
             )
@@ -306,7 +285,13 @@ class SelfStudyJourneyAdapter:
                 LearningJourneyStatusReasonCode.BRIDGE_PLAN_REQUIRED,
                 LearningJourneyStepCode.COMPLETE_BRIDGE,
                 refs,
-                actions=(action(LearningJourneyActionCode.GENERATE_BRIDGE_PLAN),),
+                actions=(
+                    action(
+                        LearningJourneyActionCode.GENERATE_BRIDGE_PLAN,
+                        enabled=False,
+                        disabled_reason="Bridge generation requires explicit target nodes from the bridge planning capability.",
+                    ),
+                ),
                 subject=subject,
                 authority=authority,
             )
@@ -318,7 +303,13 @@ class SelfStudyJourneyAdapter:
                 LearningJourneyStatusReasonCode.LEARNING_PLAN_REQUIRED,
                 LearningJourneyStepCode.BEGIN_LEARNING,
                 refs,
-                actions=(action(LearningJourneyActionCode.ACTIVATE_LEARNING_PLAN),),
+                actions=(
+                    action(
+                        LearningJourneyActionCode.ACTIVATE_LEARNING_PLAN,
+                        enabled=False,
+                        disabled_reason="Plan activation remains owned by the authoritative plan and teaching readiness capability.",
+                    ),
+                ),
                 subject=subject,
                 authority=authority,
             )
@@ -357,7 +348,13 @@ class SelfStudyJourneyAdapter:
                 LearningJourneyStatusReasonCode.LEARNING_PLAN_REQUIRED,
                 LearningJourneyStepCode.CONTINUE_LEARNING,
                 refs,
-                actions=(action(LearningJourneyActionCode.CONTINUE_TEACHING_SESSION),),
+            actions=(
+                action(
+                    LearningJourneyActionCode.CONTINUE_TEACHING_SESSION,
+                    enabled=False,
+                    disabled_reason="Teaching turn continuation remains owned by the teaching orchestration service.",
+                ),
+            ),
                 subject=subject,
                 authority=authority,
             )
@@ -366,7 +363,13 @@ class SelfStudyJourneyAdapter:
             LearningJourneyStatusReasonCode.LEARNING_PLAN_REQUIRED,
             LearningJourneyStepCode.BEGIN_LEARNING,
             refs,
-            actions=(action(LearningJourneyActionCode.BEGIN_TEACHING_SESSION),),
+            actions=(
+                action(
+                    LearningJourneyActionCode.BEGIN_TEACHING_SESSION,
+                    enabled=False,
+                    disabled_reason="Teaching session creation remains owned by the teaching orchestration service.",
+                ),
+            ),
             subject=subject,
             authority=authority,
         )

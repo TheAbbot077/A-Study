@@ -47,12 +47,51 @@ class LearningJourneyReadPresenter:
             "available_actions": actions,
             "blockers": blockers,
             "capability_references": projection.capability_references,
+            "active_capabilities": self._active_capabilities(projection.capability_references),
+            "progress": self._progress(state),
             "version": journey.version,
             "last_synchronized_at": journey.last_synchronized_at.isoformat() if journey.last_synchronized_at else None,
         }
         if active_binding and not payload["subject"]:
             payload["subject"] = {"id": str(active_binding.subject_id), "name": active_binding.subject.name}
         return payload
+
+    def _active_capabilities(self, references: dict) -> dict:
+        return {
+            "intent_id": references.get("intent_id") or None,
+            "curriculum_resolution_attempt_id": references.get("curriculum_resolution_attempt_id") or None,
+            "diagnostic_id": references.get("diagnostic_id") or None,
+            "placement_id": references.get("placement_id") or None,
+            "bridge_plan_id": references.get("bridge_plan_id") or None,
+            "learning_plan_id": references.get("learning_plan_id") or None,
+            "teaching_preparation_id": references.get("teaching_preparation_id") or None,
+            "active_teaching_session_id": references.get("active_teaching_session_id") or None,
+        }
+
+    def _progress(self, state: str) -> dict:
+        phases = [
+            ("GOAL_DISCOVERY", {"CREATED", "DISCOVERING_GOAL", "INTENT_CONFIRMED"}),
+            ("CURRICULUM", {"RESOLVING_CURRICULUM", "CURRICULUM_UNRESOLVED", "CURRICULUM_MATCHED", "SUBJECT_BINDING_REQUIRED", "SUBJECT_BINDING_UNAVAILABLE", "SUBJECT_BOUND"}),
+            ("STARTING_STATE", {"STARTING_STATE_REQUIRED", "STARTING_STATE_IN_PROGRESS", "STARTING_STATE_CONFIRMED"}),
+            ("BRIDGE", {"BRIDGE_REQUIRED"}),
+            ("PLANNING", {"PLAN_REQUIRED", "PLAN_READY"}),
+            ("LEARNING", {"LEARNING_ACTIVE", "LEARNING_BLOCKED", "PAUSED"}),
+            ("COMPLETED", {"LEARNING_GOAL_COMPLETED", "WITHDRAWN", "ARCHIVED"}),
+        ]
+        for index, (phase, states) in enumerate(phases, start=1):
+            if state in states:
+                return {
+                    "phase": phase,
+                    "completed_steps": max(0, index - 1),
+                    "total_known_steps": len(phases),
+                    "is_exact_total": False,
+                }
+        return {
+            "phase": "GOAL_DISCOVERY",
+            "completed_steps": 0,
+            "total_known_steps": len(phases),
+            "is_exact_total": False,
+        }
 
     def _projection(self, journey: LearningJourney):
         binding = journey.source_bindings.first()

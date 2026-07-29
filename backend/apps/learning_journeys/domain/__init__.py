@@ -1,5 +1,6 @@
 from .enums import (
     LearningJourneyActionCode,
+    LearningJourneyActionReceiptStatus,
     LearningJourneyBlockerCode,
     LearningJourneySourceType,
     LearningJourneyStatus,
@@ -11,6 +12,7 @@ from .enums import (
 )
 from .models import (
     LearningJourney,
+    LearningJourneyActionReceipt,
     LearningJourneyCapabilityReferences,
     LearningJourneySourceBinding,
     LearningJourneySubjectBinding,
@@ -18,10 +20,12 @@ from .models import (
 
 __all__ = [
     "LearningJourney",
+    "LearningJourneyActionReceipt",
     "LearningJourneyCapabilityReferences",
     "LearningJourneySourceBinding",
     "LearningJourneySubjectBinding",
     "LearningJourneyActionCode",
+    "LearningJourneyActionReceiptStatus",
     "LearningJourneyBlockerCode",
     "LearningJourneySourceType",
     "LearningJourneyStatus",

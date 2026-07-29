@@ -11,6 +11,7 @@ from .enums import (
     LearningJourneySourceType,
     LearningJourneyStatus,
     LearningJourneyStatusReasonCode,
+    LearningJourneyActionReceiptStatus,
     LearningJourneySubjectBindingSource,
     LearningJourneySubjectBindingStatus,
     LearningJourneyType,
@@ -231,3 +232,64 @@ class LearningJourneyCapabilityReferences(models.Model):
         if changed:
             self.version += 1
         return changed
+
+
+class LearningJourneyActionReceipt(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    journey = models.ForeignKey(LearningJourney, on_delete=models.PROTECT, related_name="action_receipts")
+    action_code = models.CharField(max_length=64)
+    actor = models.ForeignKey("users.User", on_delete=models.PROTECT, related_name="learning_journey_action_receipts")
+    idempotency_key = models.CharField(max_length=128, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=LearningJourneyActionReceiptStatus.choices,
+        default=LearningJourneyActionReceiptStatus.ACCEPTED,
+    )
+    source_capability = models.CharField(max_length=96, blank=True)
+    source_record_id = models.UUIDField(null=True, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    failure_code = models.CharField(max_length=96, blank=True)
+    failure_message = models.CharField(max_length=500, blank=True)
+    request_metadata = models.JSONField(default=dict, blank=True)
+    result_metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "learning_journey_action_receipt"
+        indexes = [
+            models.Index(fields=["journey", "action_code", "status"], name="lj_receipt_action_status_idx"),
+            models.Index(fields=["actor", "started_at"], name="lj_receipt_actor_time_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["journey", "action_code", "idempotency_key"],
+                condition=~Q(idempotency_key=""),
+                name="lj_action_receipt_idempotency_unique",
+            ),
+        ]
+
+    def mark_succeeded(self, *, source_capability: str = "", source_record_id=None, result_metadata: dict | None = None):
+        self.status = LearningJourneyActionReceiptStatus.SUCCEEDED
+        self.source_capability = source_capability
+        self.source_record_id = source_record_id
+        self.result_metadata = result_metadata or {}
+        self.completed_at = timezone.now()
+
+    def mark_rejected(self, *, code: str, message: str, result_metadata: dict | None = None):
+        self.status = LearningJourneyActionReceiptStatus.REJECTED
+        self.failure_code = code
+        self.failure_message = message[:500]
+        self.result_metadata = result_metadata or {}
+        self.completed_at = timezone.now()
+
+    def mark_failed(self, *, code: str, message: str, result_metadata: dict | None = None):
+        self.status = LearningJourneyActionReceiptStatus.FAILED
+        self.failure_code = code
+        self.failure_message = message[:500]
+        self.result_metadata = result_metadata or {}
+        self.completed_at = timezone.now()
+
+    def mark_no_op(self, *, result_metadata: dict | None = None):
+        self.status = LearningJourneyActionReceiptStatus.NO_OP
+        self.result_metadata = result_metadata or {}
+        self.completed_at = timezone.now()

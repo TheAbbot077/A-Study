@@ -8,10 +8,17 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from ..application.commands import ExecuteLearningJourneyActionCommand
+from ..application.orchestration import SelfStudyJourneyOrchestrator
 from ..application.queries import GetLearningJourneyService, ListLearnerJourneysService
 from ..application.services import CreateLearningJourneyService, LearningJourneyLifecycleService, SynchronizeLearningJourneyService
 from ..domain.models import LearningJourney
-from .serializers import CreateInstitutionalJourneySerializer, CreateSelfStudyJourneySerializer, JourneyVersionCommandSerializer
+from .serializers import (
+    CreateInstitutionalJourneySerializer,
+    CreateSelfStudyJourneySerializer,
+    ExecuteLearningJourneyActionSerializer,
+    JourneyVersionCommandSerializer,
+)
 
 
 def problem(exc: DjangoValidationError, response_status=status.HTTP_400_BAD_REQUEST):
@@ -29,6 +36,7 @@ class LearningJourneyViewSet(viewsets.ViewSet):
     list_service_class = ListLearnerJourneysService
     sync_service_class = SynchronizeLearningJourneyService
     lifecycle_service_class = LearningJourneyLifecycleService
+    orchestrator_class = SelfStudyJourneyOrchestrator
 
     def _create_service(self):
         return self.create_service_class()
@@ -44,6 +52,9 @@ class LearningJourneyViewSet(viewsets.ViewSet):
 
     def _lifecycle_service(self):
         return self.lifecycle_service_class()
+
+    def _orchestrator(self):
+        return self.orchestrator_class()
 
     def list(self, request):
         return Response(self._list_service().execute(actor=request.user))
@@ -110,6 +121,33 @@ class LearningJourneyViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     def withdraw(self, request, pk=None):
         return self._lifecycle(request, pk=pk, command="withdraw")
+
+    @action(detail=True, methods=["post"], url_path=r"actions/(?P<action_code>[^/.]+)")
+    def execute_action(self, request, pk=None, action_code=None):
+        serializer = ExecuteLearningJourneyActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            command = ExecuteLearningJourneyActionCommand(
+                journey_id=str(pk),
+                action_code=str(action_code or "").upper().replace("-", "_"),
+                actor_id=str(request.user.id),
+                idempotency_key=serializer.validated_data.get("idempotency_key", ""),
+                payload=serializer.validated_data.get("payload", {}),
+                request_context={"path": request.path, "method": request.method},
+            )
+            result = self._orchestrator().execute(command=command, actor=request.user)
+            response_status = status.HTTP_200_OK
+            if result["receipt"]["status"] == "REJECTED":
+                response_status = status.HTTP_409_CONFLICT
+            if result["receipt"]["status"] == "FAILED":
+                response_status = status.HTTP_400_BAD_REQUEST
+            return Response(result, status=response_status)
+        except LearningJourney.DoesNotExist as exc:
+            raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except DjangoValidationError as exc:
+            return problem(exc)
 
     def _lifecycle(self, request, *, pk, command: str):
         serializer = JourneyVersionCommandSerializer(data=request.data)

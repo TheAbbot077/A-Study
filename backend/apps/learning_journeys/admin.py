@@ -5,6 +5,7 @@ from django.contrib import admin, messages
 from .application.services import LearningJourneyLifecycleService, SynchronizeLearningJourneyService
 from .domain.models import (
     LearningJourney,
+    LearningJourneyActionReceipt,
     LearningJourneyCapabilityReferences,
     LearningJourneySourceBinding,
     LearningJourneySubjectBinding,
@@ -31,6 +32,17 @@ class LearningJourneySubjectBindingInline(admin.TabularInline):
         return False
 
 
+class LearningJourneyActionReceiptInline(admin.TabularInline):
+    model = LearningJourneyActionReceipt
+    extra = 0
+    can_delete = False
+    readonly_fields = [field.name for field in LearningJourneyActionReceipt._meta.fields]
+    fields = ("id", "action_code", "actor", "status", "source_capability", "failure_code", "started_at", "completed_at")
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(LearningJourney)
 class LearningJourneyAdmin(admin.ModelAdmin):
     list_display = (
@@ -47,7 +59,7 @@ class LearningJourneyAdmin(admin.ModelAdmin):
     list_filter = ("journey_type", "status", "status_reason_code")
     search_fields = ("id", "learner__email", "institution__name")
     readonly_fields = [field.name for field in LearningJourney._meta.fields]
-    inlines = [LearningJourneySourceBindingInline, LearningJourneySubjectBindingInline]
+    inlines = [LearningJourneySourceBindingInline, LearningJourneySubjectBindingInline, LearningJourneyActionReceiptInline]
     actions = ["synchronize_selected_journeys", "pause_selected_journeys", "resume_selected_journeys", "archive_selected_journeys"]
 
     def has_add_permission(self, request):
@@ -117,6 +129,17 @@ class LearningJourneySubjectBindingAdmin(admin.ModelAdmin):
 class LearningJourneyCapabilityReferencesAdmin(admin.ModelAdmin):
     list_display = ("id", "journey", "intent_id", "diagnostic_id", "bridge_plan_id", "teaching_preparation_id", "updated_at")
     readonly_fields = [field.name for field in LearningJourneyCapabilityReferences._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(LearningJourneyActionReceipt)
+class LearningJourneyActionReceiptAdmin(admin.ModelAdmin):
+    list_display = ("id", "journey", "action_code", "actor", "status", "source_capability", "failure_code", "started_at", "completed_at")
+    list_filter = ("action_code", "status", "source_capability")
+    search_fields = ("id", "journey__id", "actor__email", "idempotency_key", "failure_code")
+    readonly_fields = [field.name for field in LearningJourneyActionReceipt._meta.fields]
 
     def has_add_permission(self, request):
         return False
