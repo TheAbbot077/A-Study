@@ -349,5 +349,13 @@ for event_name in [
     "learning_journey.learning_plan_activated",
     "learning_journey.teaching_prepared",
     "learning_journey.teaching_session_started",
+    "learning_competency.emerging",
+    "learning_competency.demonstrated",
+    "learning_competency.reinforced",
+    "learning_competency.review_required",
+    "learning_competency.regressed",
+    "learning_competency.superseded",
+    "journey.evolved",
+    "learning_plan.evolution_requested",
 ]:
     default_event_registry._subscribers.setdefault(event_name, [])

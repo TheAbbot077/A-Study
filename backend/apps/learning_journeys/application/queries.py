@@ -4,8 +4,8 @@ from django.core.exceptions import PermissionDenied
 
 from apps.users.domain.models import InstitutionMembership, InstitutionRole
 
-from ..domain.enums import LearningJourneySourceType
-from ..domain.models import LearningJourney, LearningJourneySourceBinding
+from ..domain.enums import LearningCompetencyProgressState, LearningCompetencyUnlockState, LearningJourneySourceType
+from ..domain.models import LearningCompetencyProgress, LearningJourney, LearningJourneySourceBinding
 from .adapters import InstitutionalJourneyAdapter, SelfStudyJourneyAdapter
 from .services import can_read_journey
 
@@ -49,6 +49,7 @@ class LearningJourneyReadPresenter:
             "capability_references": projection.capability_references,
             "active_capabilities": self._active_capabilities(projection.capability_references),
             "progress": self._progress(state),
+            "competency_context": self._competency_context(journey),
             "version": journey.version,
             "last_synchronized_at": journey.last_synchronized_at.isoformat() if journey.last_synchronized_at else None,
         }
@@ -91,6 +92,46 @@ class LearningJourneyReadPresenter:
             "completed_steps": 0,
             "total_known_steps": len(phases),
             "is_exact_total": False,
+        }
+
+    def _competency_context(self, journey: LearningJourney) -> dict:
+        rows = list(
+            LearningCompetencyProgress.objects.select_related("competency")
+            .filter(journey=journey)
+            .order_by("competency__ordinal", "competency__stable_key")
+        )
+        completed_states = {LearningCompetencyProgressState.DEMONSTRATED, LearningCompetencyProgressState.REINFORCED}
+        active_rows = [row for row in rows if row.unlock_state == LearningCompetencyUnlockState.ACTIVE]
+        available_rows = [row for row in rows if row.unlock_state == LearningCompetencyUnlockState.AVAILABLE]
+        review_rows = [row for row in rows if row.state == LearningCompetencyProgressState.REVIEW_REQUIRED]
+        return {
+            "current_learning_phase": self._competency_phase(active_rows=active_rows, available_rows=available_rows, review_rows=review_rows, rows=rows),
+            "active_competency": self._competency_row((active_rows or available_rows or [None])[0]),
+            "next_competency": self._competency_row((available_rows or [None])[0]),
+            "blocked_competencies": [self._competency_row(row) for row in review_rows],
+            "available_competencies": [self._competency_row(row) for row in available_rows],
+            "completed_competency_count": sum(1 for row in rows if row.state in completed_states),
+        }
+
+    def _competency_phase(self, *, active_rows: list, available_rows: list, review_rows: list, rows: list) -> str:
+        if review_rows:
+            return "REVIEW"
+        if active_rows or available_rows:
+            return "LEARNING"
+        if rows:
+            return "PROGRESSING"
+        return "NOT_STARTED"
+
+    def _competency_row(self, row: LearningCompetencyProgress | None) -> dict | None:
+        if not row:
+            return None
+        return {
+            "progress_id": str(row.id),
+            "competency_id": str(row.competency_id),
+            "stable_key": row.competency.stable_key,
+            "title": row.competency.title,
+            "state": row.state,
+            "unlock_state": row.unlock_state,
         }
 
     def _projection(self, journey: LearningJourney):

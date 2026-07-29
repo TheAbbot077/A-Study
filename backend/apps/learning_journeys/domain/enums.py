@@ -134,3 +134,33 @@ class LearningJourneyActionReceiptStatus(models.TextChoices):
     FAILED = "FAILED", "Failed"
     REJECTED = "REJECTED", "Rejected"
     NO_OP = "NO_OP", "No-op"
+
+
+class LearningCompetencyProgressState(models.TextChoices):
+    NOT_STARTED = "NOT_STARTED", "Not started"
+    EMERGING = "EMERGING", "Emerging"
+    DEVELOPING = "DEVELOPING", "Developing"
+    DEMONSTRATED = "DEMONSTRATED", "Demonstrated"
+    REINFORCED = "REINFORCED", "Reinforced"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED", "Review required"
+    REGRESSED = "REGRESSED", "Regressed"
+    SUPERSEDED = "SUPERSEDED", "Superseded"
+
+
+class LearningCompetencyUnlockState(models.TextChoices):
+    LOCKED = "LOCKED", "Locked"
+    AVAILABLE = "AVAILABLE", "Available"
+    ACTIVE = "ACTIVE", "Active"
+    COMPLETED = "COMPLETED", "Completed"
+    SUPERSEDED = "SUPERSEDED", "Superseded"
+
+
+class LearningCompetencyProgressReason(models.TextChoices):
+    INITIALIZED = "INITIALIZED", "Initialized"
+    MASTERY_EMERGING = "MASTERY_EMERGING", "Mastery emerging"
+    MASTERY_DEMONSTRATED = "MASTERY_DEMONSTRATED", "Mastery demonstrated"
+    MASTERY_REINFORCED = "MASTERY_REINFORCED", "Mastery reinforced"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED", "Review required"
+    REGRESSION_EVIDENCE = "REGRESSION_EVIDENCE", "Regression evidence"
+    CURRICULUM_SUPERSEDED = "CURRICULUM_SUPERSEDED", "Curriculum superseded"
+    UNCHANGED = "UNCHANGED", "Unchanged"

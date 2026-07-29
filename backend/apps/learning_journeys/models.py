@@ -4,6 +4,8 @@ from apps.learning_journeys.domain.models import (
     LearningJourneyCapabilityReferences,
     LearningJourneySourceBinding,
     LearningJourneySubjectBinding,
+    LearningCompetencyProgress,
+    LearningCompetencyProgressHistory,
 )
 
 __all__ = [
@@ -12,4 +14,6 @@ __all__ = [
     "LearningJourneyCapabilityReferences",
     "LearningJourneySourceBinding",
     "LearningJourneySubjectBinding",
+    "LearningCompetencyProgress",
+    "LearningCompetencyProgressHistory",
 ]

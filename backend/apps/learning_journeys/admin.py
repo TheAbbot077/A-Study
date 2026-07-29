@@ -4,6 +4,8 @@ from django.contrib import admin, messages
 
 from .application.services import LearningJourneyLifecycleService, SynchronizeLearningJourneyService
 from .domain.models import (
+    LearningCompetencyProgress,
+    LearningCompetencyProgressHistory,
     LearningJourney,
     LearningJourneyActionReceipt,
     LearningJourneyCapabilityReferences,
@@ -43,6 +45,17 @@ class LearningJourneyActionReceiptInline(admin.TabularInline):
         return False
 
 
+class LearningCompetencyProgressInline(admin.TabularInline):
+    model = LearningCompetencyProgress
+    extra = 0
+    can_delete = False
+    readonly_fields = [field.name for field in LearningCompetencyProgress._meta.fields]
+    fields = ("id", "competency", "state", "unlock_state", "latest_mastery_decision", "last_progressed_at", "updated_at")
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(LearningJourney)
 class LearningJourneyAdmin(admin.ModelAdmin):
     list_display = (
@@ -59,7 +72,12 @@ class LearningJourneyAdmin(admin.ModelAdmin):
     list_filter = ("journey_type", "status", "status_reason_code")
     search_fields = ("id", "learner__email", "institution__name")
     readonly_fields = [field.name for field in LearningJourney._meta.fields]
-    inlines = [LearningJourneySourceBindingInline, LearningJourneySubjectBindingInline, LearningJourneyActionReceiptInline]
+    inlines = [
+        LearningJourneySourceBindingInline,
+        LearningJourneySubjectBindingInline,
+        LearningJourneyActionReceiptInline,
+        LearningCompetencyProgressInline,
+    ]
     actions = ["synchronize_selected_journeys", "pause_selected_journeys", "resume_selected_journeys", "archive_selected_journeys"]
 
     def has_add_permission(self, request):
@@ -142,4 +160,56 @@ class LearningJourneyActionReceiptAdmin(admin.ModelAdmin):
     readonly_fields = [field.name for field in LearningJourneyActionReceipt._meta.fields]
 
     def has_add_permission(self, request):
+        return False
+
+
+@admin.register(LearningCompetencyProgress)
+class LearningCompetencyProgressAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "journey",
+        "competency",
+        "state",
+        "unlock_state",
+        "latest_mastery_decision",
+        "last_progressed_at",
+        "updated_at",
+    )
+    list_filter = ("state", "unlock_state")
+    search_fields = ("id", "journey__id", "competency__title", "competency__stable_key")
+    readonly_fields = [field.name for field in LearningCompetencyProgress._meta.fields]
+    actions = ["synchronize_progress_projection"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_staff
+
+    def synchronize_progress_projection(self, request, queryset):
+        service = SynchronizeLearningJourneyService()
+        success = 0
+        journey_ids = set(queryset.values_list("journey_id", flat=True))
+        for journey_id in journey_ids:
+            try:
+                service.execute(journey_id=journey_id, actor=request.user)
+                success += 1
+            except Exception as exc:  # pragma: no cover - admin feedback path
+                self.message_user(request, f"{journey_id}: {exc}", level=messages.ERROR)
+        self.message_user(request, f"Synchronized {success} journey projection(s).", level=messages.SUCCESS)
+
+    synchronize_progress_projection.short_description = "Synchronize progression projection"
+
+
+@admin.register(LearningCompetencyProgressHistory)
+class LearningCompetencyProgressHistoryAdmin(admin.ModelAdmin):
+    list_display = ("id", "journey", "competency", "old_state", "new_state", "reason", "actor", "created_at")
+    list_filter = ("new_state", "reason")
+    search_fields = ("id", "journey__id", "competency__title", "competency__stable_key", "actor__email")
+    readonly_fields = [field.name for field in LearningCompetencyProgressHistory._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False

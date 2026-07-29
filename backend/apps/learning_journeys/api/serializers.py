@@ -43,5 +43,26 @@ class LearningJourneyReadSerializer(serializers.Serializer):
     capability_references = serializers.DictField()
     active_capabilities = serializers.DictField(required=False)
     progress = serializers.DictField(required=False)
+    competency_context = serializers.DictField(required=False)
     version = serializers.IntegerField()
     last_synchronized_at = serializers.CharField(required=False, allow_null=True)
+
+
+class LearningCompetencyProgressSnapshotSerializer(serializers.Serializer):
+    journey_id = serializers.UUIDField()
+    completed_competencies = serializers.ListField()
+    active_competencies = serializers.ListField()
+    emerging_competencies = serializers.ListField()
+    review_competencies = serializers.ListField()
+    locked_competencies = serializers.ListField()
+    next_available_competencies = serializers.ListField()
+
+
+class LearningJourneyProgressSnapshotSerializer(serializers.Serializer):
+    journey_id = serializers.UUIDField()
+    current_learning_phase = serializers.CharField()
+    active_competency = serializers.DictField(required=False, allow_null=True)
+    next_competency = serializers.DictField(required=False, allow_null=True)
+    blocked_competencies = serializers.ListField()
+    available_competencies = serializers.ListField()
+    completed_competency_count = serializers.IntegerField()

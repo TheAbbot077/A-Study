@@ -10,6 +10,7 @@ from rest_framework.response import Response
 
 from ..application.commands import ExecuteLearningJourneyActionCommand
 from ..application.orchestration import SelfStudyJourneyOrchestrator
+from ..application.progression_services import CompetencyProgressSnapshotService
 from ..application.queries import GetLearningJourneyService, ListLearnerJourneysService
 from ..application.services import CreateLearningJourneyService, LearningJourneyLifecycleService, SynchronizeLearningJourneyService
 from ..domain.models import LearningJourney
@@ -37,6 +38,7 @@ class LearningJourneyViewSet(viewsets.ViewSet):
     sync_service_class = SynchronizeLearningJourneyService
     lifecycle_service_class = LearningJourneyLifecycleService
     orchestrator_class = SelfStudyJourneyOrchestrator
+    progress_snapshot_service_class = CompetencyProgressSnapshotService
 
     def _create_service(self):
         return self.create_service_class()
@@ -55,6 +57,9 @@ class LearningJourneyViewSet(viewsets.ViewSet):
 
     def _orchestrator(self):
         return self.orchestrator_class()
+
+    def _progress_snapshot_service(self):
+        return self.progress_snapshot_service_class()
 
     def list(self, request):
         return Response(self._list_service().execute(actor=request.user))
@@ -148,6 +153,40 @@ class LearningJourneyViewSet(viewsets.ViewSet):
             raise PermissionDenied(str(exc)) from exc
         except DjangoValidationError as exc:
             return problem(exc)
+
+    @action(detail=True, methods=["get"], url_path="competencies")
+    def competencies(self, request, pk=None):
+        try:
+            return Response(self._progress_snapshot_service().execute(journey_id=pk, actor=request.user))
+        except LearningJourney.DoesNotExist as exc:
+            raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+
+    @action(detail=True, methods=["get"], url_path="progress")
+    def progress(self, request, pk=None):
+        try:
+            return Response(self._progress_snapshot_service().journey_progress(journey_id=pk, actor=request.user))
+        except LearningJourney.DoesNotExist as exc:
+            raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+
+    @action(detail=True, methods=["get"], url_path="snapshot")
+    def snapshot(self, request, pk=None):
+        try:
+            snapshot_service = self._progress_snapshot_service()
+            return Response(
+                {
+                    "journey": self._get_service().execute(journey_id=pk, actor=request.user),
+                    "competencies": snapshot_service.execute(journey_id=pk, actor=request.user),
+                    "progress": snapshot_service.journey_progress(journey_id=pk, actor=request.user),
+                }
+            )
+        except LearningJourney.DoesNotExist as exc:
+            raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
 
     def _lifecycle(self, request, *, pk, command: str):
         serializer = JourneyVersionCommandSerializer(data=request.data)

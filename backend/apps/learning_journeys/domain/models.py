@@ -8,6 +8,9 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .enums import (
+    LearningCompetencyProgressReason,
+    LearningCompetencyProgressState,
+    LearningCompetencyUnlockState,
     LearningJourneySourceType,
     LearningJourneyStatus,
     LearningJourneyStatusReasonCode,
@@ -293,3 +296,131 @@ class LearningJourneyActionReceipt(models.Model):
         self.status = LearningJourneyActionReceiptStatus.NO_OP
         self.result_metadata = result_metadata or {}
         self.completed_at = timezone.now()
+
+
+class LearningCompetencyProgress(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    journey = models.ForeignKey(LearningJourney, on_delete=models.PROTECT, related_name="competency_progress")
+    competency = models.ForeignKey("self_study.CurriculumNode", on_delete=models.PROTECT, related_name="learning_journey_progress")
+    state = models.CharField(
+        max_length=24,
+        choices=LearningCompetencyProgressState.choices,
+        default=LearningCompetencyProgressState.NOT_STARTED,
+    )
+    unlock_state = models.CharField(
+        max_length=16,
+        choices=LearningCompetencyUnlockState.choices,
+        default=LearningCompetencyUnlockState.LOCKED,
+    )
+    latest_mastery_decision = models.ForeignKey(
+        "assessments.MasteryDecision",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="learning_competency_progress",
+    )
+    latest_evidence_summary = models.JSONField(default=dict, blank=True)
+    unlocked_at = models.DateTimeField(null=True, blank=True)
+    first_demonstrated_at = models.DateTimeField(null=True, blank=True)
+    last_progressed_at = models.DateTimeField(null=True, blank=True)
+    superseded_at = models.DateTimeField(null=True, blank=True)
+    superseded_by = models.ForeignKey(
+        "self_study.CurriculumNode",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="superseded_learning_progress",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "learning_competency_progress"
+        constraints = [
+            models.UniqueConstraint(fields=["journey", "competency"], name="lj_competency_progress_unique"),
+        ]
+        indexes = [
+            models.Index(fields=["journey", "state"], name="lj_comp_progress_state_idx"),
+            models.Index(fields=["journey", "unlock_state"], name="lj_comp_unlock_state_idx"),
+            models.Index(fields=["competency", "state"], name="lj_competency_state_idx"),
+        ]
+
+    def transition_to(
+        self,
+        state: str,
+        *,
+        unlock_state: str | None = None,
+        mastery_decision=None,
+        evidence_summary: dict | None = None,
+        when=None,
+    ) -> bool:
+        when = when or timezone.now()
+        changed = False
+        if self.state != state:
+            self.state = state
+            changed = True
+            if state == LearningCompetencyProgressState.DEMONSTRATED and not self.first_demonstrated_at:
+                self.first_demonstrated_at = when
+            if state == LearningCompetencyProgressState.SUPERSEDED:
+                self.superseded_at = when
+        if unlock_state and self.unlock_state != unlock_state:
+            self.unlock_state = unlock_state
+            changed = True
+            if unlock_state in {LearningCompetencyUnlockState.AVAILABLE, LearningCompetencyUnlockState.ACTIVE} and not self.unlocked_at:
+                self.unlocked_at = when
+        if mastery_decision and self.latest_mastery_decision_id != mastery_decision.id:
+            self.latest_mastery_decision = mastery_decision
+            changed = True
+        if evidence_summary is not None and self.latest_evidence_summary != evidence_summary:
+            self.latest_evidence_summary = evidence_summary
+            changed = True
+        if changed:
+            self.last_progressed_at = when
+            self.version += 1
+        return changed
+
+
+class LearningCompetencyProgressHistory(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    progress = models.ForeignKey(LearningCompetencyProgress, on_delete=models.PROTECT, related_name="history")
+    journey = models.ForeignKey(LearningJourney, on_delete=models.PROTECT, related_name="competency_progress_history")
+    competency = models.ForeignKey("self_study.CurriculumNode", on_delete=models.PROTECT, related_name="learning_progress_history")
+    old_state = models.CharField(max_length=24, choices=LearningCompetencyProgressState.choices)
+    new_state = models.CharField(max_length=24, choices=LearningCompetencyProgressState.choices)
+    old_unlock_state = models.CharField(max_length=16, choices=LearningCompetencyUnlockState.choices)
+    new_unlock_state = models.CharField(max_length=16, choices=LearningCompetencyUnlockState.choices)
+    reason = models.CharField(
+        max_length=48,
+        choices=LearningCompetencyProgressReason.choices,
+        default=LearningCompetencyProgressReason.UNCHANGED,
+    )
+    triggering_evidence_id = models.UUIDField(null=True, blank=True)
+    triggering_mastery_decision = models.ForeignKey(
+        "assessments.MasteryDecision",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="learning_competency_progress_history",
+    )
+    actor = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="learning_competency_progress_events",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "learning_competency_progress_history"
+        indexes = [
+            models.Index(fields=["journey", "created_at"], name="lj_comp_hist_journey_time_idx"),
+            models.Index(fields=["competency", "new_state"], name="lj_comp_hist_state_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError("Competency progress history is append-only.", code="COMPETENCY_HISTORY_APPEND_ONLY")
+        return super().save(*args, **kwargs)
