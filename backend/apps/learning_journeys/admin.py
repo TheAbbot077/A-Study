@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.contrib import admin, messages
 
 from .application.institutional_services import InstitutionalCompletionService, InstitutionalInterventionService
+from .application.operational import LearningJourneyIntegrityService
 from .application.services import LearningJourneyLifecycleService, SynchronizeLearningJourneyService
 from .domain.models import (
     InstitutionalInterventionRecommendation,
@@ -12,6 +13,8 @@ from .domain.models import (
     LearningJourney,
     LearningJourneyActionReceipt,
     LearningJourneyCapabilityReferences,
+    LearningJourneyIntegrityFinding,
+    LearningJourneyOperation,
     LearningJourneySourceBinding,
     LearningJourneySubjectBinding,
 )
@@ -48,6 +51,28 @@ class LearningJourneyActionReceiptInline(admin.TabularInline):
         return False
 
 
+class LearningJourneyOperationInline(admin.TabularInline):
+    model = LearningJourneyOperation
+    extra = 0
+    can_delete = False
+    readonly_fields = [field.name for field in LearningJourneyOperation._meta.fields]
+    fields = ("id", "action_code", "status", "progress_phase", "failure_code", "started_at", "completed_at")
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class LearningJourneyIntegrityFindingInline(admin.TabularInline):
+    model = LearningJourneyIntegrityFinding
+    extra = 0
+    can_delete = False
+    readonly_fields = [field.name for field in LearningJourneyIntegrityFinding._meta.fields]
+    fields = ("id", "code", "severity", "status", "message", "detected_at", "resolved_at")
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 class LearningCompetencyProgressInline(admin.TabularInline):
     model = LearningCompetencyProgress
     extra = 0
@@ -79,9 +104,18 @@ class LearningJourneyAdmin(admin.ModelAdmin):
         LearningJourneySourceBindingInline,
         LearningJourneySubjectBindingInline,
         LearningJourneyActionReceiptInline,
+        LearningJourneyOperationInline,
+        LearningJourneyIntegrityFindingInline,
         LearningCompetencyProgressInline,
     ]
-    actions = ["synchronize_selected_journeys", "pause_selected_journeys", "resume_selected_journeys", "archive_selected_journeys"]
+    actions = [
+        "synchronize_selected_journeys",
+        "run_integrity_check",
+        "recover_selected_journeys",
+        "pause_selected_journeys",
+        "resume_selected_journeys",
+        "archive_selected_journeys",
+    ]
 
     def has_add_permission(self, request):
         return False
@@ -98,6 +132,32 @@ class LearningJourneyAdmin(admin.ModelAdmin):
         self.message_user(request, f"Synchronized {success} learning journey(s).", level=messages.SUCCESS)
 
     synchronize_selected_journeys.short_description = "Synchronize selected journeys"
+
+    def run_integrity_check(self, request, queryset):
+        service = LearningJourneyIntegrityService()
+        findings = 0
+        for journey in queryset:
+            try:
+                result = service.check(journey_id=journey.id, actor=request.user)
+                findings += len(result["findings"])
+            except Exception as exc:  # pragma: no cover - admin feedback path
+                self.message_user(request, f"{journey.id}: {exc}", level=messages.ERROR)
+        self.message_user(request, f"Integrity check completed with {findings} open finding(s).", level=messages.SUCCESS)
+
+    run_integrity_check.short_description = "Run integrity check"
+
+    def recover_selected_journeys(self, request, queryset):
+        service = LearningJourneyIntegrityService()
+        success = 0
+        for journey in queryset:
+            try:
+                service.check(journey_id=journey.id, actor=request.user, repair=True)
+                success += 1
+            except Exception as exc:  # pragma: no cover - admin feedback path
+                self.message_user(request, f"{journey.id}: {exc}", level=messages.ERROR)
+        self.message_user(request, f"Attempted safe recovery for {success} journey(s).", level=messages.SUCCESS)
+
+    recover_selected_journeys.short_description = "Run safe journey recovery"
 
     def pause_selected_journeys(self, request, queryset):
         self._lifecycle_action(request, queryset, "pause", "Paused")
@@ -164,6 +224,49 @@ class LearningJourneyActionReceiptAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(LearningJourneyOperation)
+class LearningJourneyOperationAdmin(admin.ModelAdmin):
+    list_display = ("id", "journey", "action_code", "status", "progress_phase", "actor", "started_at", "completed_at")
+    list_filter = ("status", "action_code", "progress_phase")
+    search_fields = ("id", "journey__id", "actor__email", "failure_code")
+    readonly_fields = [field.name for field in LearningJourneyOperation._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(LearningJourneyIntegrityFinding)
+class LearningJourneyIntegrityFindingAdmin(admin.ModelAdmin):
+    list_display = ("id", "journey", "code", "severity", "status", "source_capability", "detected_at", "resolved_at")
+    list_filter = ("code", "severity", "status", "source_capability")
+    search_fields = ("id", "journey__id", "message")
+    readonly_fields = [field.name for field in LearningJourneyIntegrityFinding._meta.fields]
+    actions = ["resolve_findings", "acknowledge_findings"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def resolve_findings(self, request, queryset):
+        success = 0
+        for finding in queryset:
+            if finding.resolve(resolution="Resolved from admin action."):
+                finding.save(update_fields=["status", "resolved_at", "resolution", "updated_at"])
+                success += 1
+        self.message_user(request, f"Resolved {success} integrity finding(s).", level=messages.SUCCESS)
+
+    resolve_findings.short_description = "Resolve integrity findings"
+
+    def acknowledge_findings(self, request, queryset):
+        success = 0
+        for finding in queryset:
+            if finding.acknowledge():
+                finding.save(update_fields=["status", "acknowledged_at", "updated_at"])
+                success += 1
+        self.message_user(request, f"Acknowledged {success} integrity finding(s).", level=messages.SUCCESS)
+
+    acknowledge_findings.short_description = "Acknowledge integrity findings"
 
 
 @admin.register(LearningCompetencyProgress)

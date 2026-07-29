@@ -14,6 +14,10 @@ from .enums import (
     InstitutionalInterventionReason,
     InstitutionalInterventionSeverity,
     InstitutionalInterventionStatus,
+    LearningJourneyIntegrityFindingCode,
+    LearningJourneyIntegrityFindingStatus,
+    LearningJourneyIntegritySeverity,
+    LearningJourneyOperationStatus,
     LearningCompetencyProgressReason,
     LearningCompetencyProgressState,
     LearningCompetencyUnlockState,
@@ -302,6 +306,123 @@ class LearningJourneyActionReceipt(models.Model):
         self.status = LearningJourneyActionReceiptStatus.NO_OP
         self.result_metadata = result_metadata or {}
         self.completed_at = timezone.now()
+
+    def mark_conflict(self, *, code: str, message: str, result_metadata: dict | None = None):
+        self.status = LearningJourneyActionReceiptStatus.CONFLICT
+        self.failure_code = code
+        self.failure_message = message[:500]
+        self.result_metadata = result_metadata or {}
+        self.completed_at = timezone.now()
+
+
+class LearningJourneyOperation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    journey = models.ForeignKey(LearningJourney, on_delete=models.PROTECT, related_name="operations")
+    action_code = models.CharField(max_length=64)
+    receipt = models.ForeignKey(
+        LearningJourneyActionReceipt,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="operations",
+    )
+    actor = models.ForeignKey("users.User", on_delete=models.PROTECT, related_name="learning_journey_operations")
+    status = models.CharField(max_length=16, choices=LearningJourneyOperationStatus.choices, default=LearningJourneyOperationStatus.PENDING)
+    progress_phase = models.CharField(max_length=96, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    failure_code = models.CharField(max_length=96, blank=True)
+    failure_message = models.CharField(max_length=500, blank=True)
+    result_reference = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "learning_journey_operation"
+        indexes = [
+            models.Index(fields=["journey", "status"], name="lj_operation_status_idx"),
+            models.Index(fields=["journey", "action_code"], name="lj_operation_action_idx"),
+            models.Index(fields=["actor", "started_at"], name="lj_operation_actor_time_idx"),
+        ]
+
+    def mark_running(self, *, phase: str = "") -> bool:
+        if self.status == LearningJourneyOperationStatus.RUNNING and self.progress_phase == phase:
+            return False
+        self.status = LearningJourneyOperationStatus.RUNNING
+        self.progress_phase = phase
+        return True
+
+    def mark_succeeded(self, *, phase: str = "completed", result_reference: dict | None = None) -> bool:
+        if self.status == LearningJourneyOperationStatus.SUCCEEDED:
+            return False
+        self.status = LearningJourneyOperationStatus.SUCCEEDED
+        self.progress_phase = phase
+        self.result_reference = result_reference or {}
+        self.completed_at = timezone.now()
+        return True
+
+    def mark_failed(self, *, code: str, message: str, phase: str = "failed") -> bool:
+        if self.status == LearningJourneyOperationStatus.FAILED and self.failure_code == code:
+            return False
+        self.status = LearningJourneyOperationStatus.FAILED
+        self.progress_phase = phase
+        self.failure_code = code
+        self.failure_message = message[:500]
+        self.completed_at = timezone.now()
+        return True
+
+    def mark_cancelled(self, *, phase: str = "cancelled") -> bool:
+        if self.status == LearningJourneyOperationStatus.CANCELLED:
+            return False
+        self.status = LearningJourneyOperationStatus.CANCELLED
+        self.progress_phase = phase
+        self.completed_at = timezone.now()
+        return True
+
+
+class LearningJourneyIntegrityFinding(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    journey = models.ForeignKey(LearningJourney, on_delete=models.PROTECT, related_name="integrity_findings")
+    code = models.CharField(max_length=96, choices=LearningJourneyIntegrityFindingCode.choices)
+    severity = models.CharField(max_length=16, choices=LearningJourneyIntegritySeverity.choices, default=LearningJourneyIntegritySeverity.WARNING)
+    status = models.CharField(max_length=16, choices=LearningJourneyIntegrityFindingStatus.choices, default=LearningJourneyIntegrityFindingStatus.OPEN)
+    message = models.CharField(max_length=500)
+    source_capability = models.CharField(max_length=96, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    detected_at = models.DateTimeField(auto_now_add=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolution = models.CharField(max_length=500, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "learning_journey_integrity_finding"
+        indexes = [
+            models.Index(fields=["journey", "status"], name="lj_integrity_status_idx"),
+            models.Index(fields=["journey", "code"], name="lj_integrity_code_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["journey", "code"],
+                condition=Q(status=LearningJourneyIntegrityFindingStatus.OPEN),
+                name="lj_integrity_one_open_code",
+            ),
+        ]
+
+    def resolve(self, *, resolution: str = "", when=None) -> bool:
+        if self.status == LearningJourneyIntegrityFindingStatus.RESOLVED:
+            return False
+        self.status = LearningJourneyIntegrityFindingStatus.RESOLVED
+        self.resolved_at = when or timezone.now()
+        self.resolution = resolution[:500]
+        return True
+
+    def acknowledge(self, *, when=None) -> bool:
+        if self.status != LearningJourneyIntegrityFindingStatus.OPEN:
+            return False
+        self.status = LearningJourneyIntegrityFindingStatus.ACKNOWLEDGED
+        self.acknowledged_at = when or timezone.now()
+        return True
 
 
 class LearningCompetencyProgress(models.Model):

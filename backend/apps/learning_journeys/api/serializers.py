@@ -24,6 +24,7 @@ class JourneyVersionCommandSerializer(serializers.Serializer):
 
 class ExecuteLearningJourneyActionSerializer(serializers.Serializer):
     idempotency_key = serializers.CharField(max_length=128, allow_blank=True, required=False)
+    expected_journey_version = serializers.IntegerField(min_value=1, required=False)
     payload = serializers.DictField(required=False)
 
 

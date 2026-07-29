@@ -12,6 +12,9 @@ from .services import can_read_journey
 
 class LearningJourneyReadPresenter:
     def present(self, journey: LearningJourney) -> dict:
+        return self.present_legacy(journey)
+
+    def present_legacy(self, journey: LearningJourney) -> dict:
         projection = self._projection(journey)
         active_binding = journey.subject_bindings.select_related("subject", "curriculum_reference").filter(status="ACTIVE").first()
         state = projection.status
@@ -195,31 +198,16 @@ class LearningJourneyReadPresenter:
 
 class GetLearningJourneyService:
     def execute(self, *, journey_id, actor) -> dict:
-        journey = LearningJourney.objects.select_related("learner", "institution").get(id=journey_id)
-        if not can_read_journey(actor, journey):
-            raise PermissionDenied("LEARNING_JOURNEY_PERMISSION_DENIED")
-        return LearningJourneyReadPresenter().present(journey)
+        from .operational import LearningJourneyOperationalViewService
+
+        return LearningJourneyOperationalViewService().execute(journey_id=journey_id, actor=actor)
 
 
 class ListLearnerJourneysService:
     def execute(self, *, actor) -> list[dict]:
-        queryset = LearningJourney.objects.select_related("learner", "institution").order_by("-updated_at")
-        if not actor.is_superuser:
-            institution_ids = list(
-                InstitutionMembership.objects.filter(
-                    user=actor,
-                    is_active=True,
-                    role__in=[
-                        InstitutionRole.ADMINISTRATOR,
-                        InstitutionRole.INSTITUTION_OWNER,
-                        InstitutionRole.SYSTEM_ADMINISTRATOR,
-                        InstitutionRole.TEACHER,
-                    ],
-                ).values_list("institution_id", flat=True)
-            )
-            queryset = queryset.filter(learner=actor) | queryset.filter(institution_id__in=institution_ids)
-        journey_ids = list(queryset.distinct().values_list("id", flat=True))
-        return [GetLearningJourneyService().execute(journey_id=journey_id, actor=actor) for journey_id in journey_ids]
+        from .operational import LearningJourneyCollectionService
+
+        return LearningJourneyCollectionService().execute(actor=actor)
 
 
 def source_binding_for_self_study_workspace(*, workspace_id):

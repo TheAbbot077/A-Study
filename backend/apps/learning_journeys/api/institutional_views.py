@@ -12,8 +12,8 @@ from ..application.institutional_services import (
     InstitutionalInterventionService,
     InstitutionalJourneyVisibilityPolicy,
 )
+from ..application.operational import LearningJourneyOperationalViewService
 from ..application.progression_services import CompetencyProgressSnapshotService
-from ..application.queries import GetLearningJourneyService
 from ..domain.models import InstitutionalInterventionRecommendation, InstitutionalLearningAssignment, LearningJourney
 
 
@@ -33,7 +33,7 @@ def intervention_payload(recommendation: InstitutionalInterventionRecommendation
 class InstitutionalLearningJourneyViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     visibility_policy_class = InstitutionalJourneyVisibilityPolicy
-    get_service_class = GetLearningJourneyService
+    get_service_class = LearningJourneyOperationalViewService
     progress_service_class = CompetencyProgressSnapshotService
     completion_service_class = InstitutionalCompletionService
     intervention_service_class = InstitutionalInterventionService

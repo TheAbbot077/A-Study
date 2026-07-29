@@ -19,6 +19,7 @@ from ..domain.models import LearningJourney, LearningJourneyActionReceipt, Learn
 from .action_policy import SelfStudyJourneyActionPolicy
 from .commands import ExecuteLearningJourneyActionCommand
 from .invalidation import SelfStudyJourneyDependencyInvalidationPolicy
+from .operational import LearningJourneyOperationService, stable_payload_hash
 from .queries import GetLearningJourneyService
 from .services import LearningJourneyLifecycleService, SynchronizeLearningJourneyService, can_read_journey
 
@@ -49,7 +50,9 @@ def _publish(events: EventPublisher, name: str, receipt: LearningJourneyActionRe
 
 
 def safe_request_metadata(payload: dict) -> dict:
-    return {key: str(value) for key, value in (payload or {}).items() if key in SAFE_PAYLOAD_KEYS and value not in (None, "")}
+    metadata = {key: str(value) for key, value in (payload or {}).items() if key in SAFE_PAYLOAD_KEYS and value not in (None, "")}
+    metadata["payload_hash"] = stable_payload_hash(payload or {})
+    return metadata
 
 
 class SelfStudyJourneyOrchestrator:
@@ -73,12 +76,43 @@ class SelfStudyJourneyOrchestrator:
             raise ValidationError("Journey action is only available for self-study journeys.", code="LEARNING_JOURNEY_TYPE_MISMATCH")
 
         existing = self._idempotent_receipt(journey=journey, action_code=command.action_code, idempotency_key=command.idempotency_key)
+        if existing and existing.request_metadata.get("payload_hash") != stable_payload_hash(command.payload or {}):
+            receipt = existing
+            if receipt.status == LearningJourneyActionReceiptStatus.ACCEPTED:
+                receipt.mark_conflict(
+                    code="IDEMPOTENCY_KEY_PAYLOAD_MISMATCH",
+                    message="This idempotency key was already used with a different payload.",
+                    result_metadata={"current_version": journey.version},
+                )
+                receipt.save()
+                LearningJourneyOperationService().create_for_receipt(receipt=receipt, status="FAILED", phase="idempotency_conflict")
+                return self._response(receipt=receipt, journey_id=journey.id, actor=actor, replayed=True)
+            return self._conflict_response(
+                receipt=receipt,
+                journey_id=journey.id,
+                actor=actor,
+                code="IDEMPOTENCY_KEY_PAYLOAD_MISMATCH",
+                message="This idempotency key was already used with a different payload.",
+            )
         if existing and existing.status in {
             LearningJourneyActionReceiptStatus.SUCCEEDED,
             LearningJourneyActionReceiptStatus.NO_OP,
             LearningJourneyActionReceiptStatus.REJECTED,
+            LearningJourneyActionReceiptStatus.CONFLICT,
         }:
             return self._response(receipt=existing, journey_id=journey.id, actor=actor, replayed=True)
+
+        if command.expected_journey_version and journey.version != command.expected_journey_version:
+            receipt = existing or self._receipt(journey=journey, actor=actor, command=command)
+            receipt.mark_conflict(
+                code="JOURNEY_VERSION_CONFLICT",
+                message="Journey version is stale.",
+                result_metadata={"expected_version": command.expected_journey_version, "current_version": journey.version},
+            )
+            receipt.save()
+            transaction.on_commit(lambda: _publish(self.events, "learning_journey.command_conflicted", receipt, {"failure_code": receipt.failure_code}))
+            LearningJourneyOperationService().create_for_receipt(receipt=receipt, status="FAILED", phase="version_conflict")
+            return self._response(receipt=receipt, journey_id=journey.id, actor=actor)
 
         definition = self.policy.definition(command.action_code)
         if not definition:
@@ -86,6 +120,7 @@ class SelfStudyJourneyOrchestrator:
             receipt.mark_rejected(code="LEARNING_JOURNEY_ACTION_NOT_REGISTERED", message="Journey action is not registered.")
             receipt.save()
             transaction.on_commit(lambda: _publish(self.events, "learning_journey.action_rejected", receipt))
+            LearningJourneyOperationService().create_for_receipt(receipt=receipt, status="FAILED", phase="rejected")
             return self._response(receipt=receipt, journey_id=journey.id, actor=actor)
 
         available, reason = self.policy.availability(journey=journey, action_code=command.action_code)
@@ -95,6 +130,7 @@ class SelfStudyJourneyOrchestrator:
             receipt.source_capability = definition.source_capability
             receipt.save()
             transaction.on_commit(lambda: _publish(self.events, "learning_journey.action_rejected", receipt))
+            LearningJourneyOperationService().create_for_receipt(receipt=receipt, status="FAILED", phase="rejected")
             return self._response(receipt=receipt, journey_id=journey.id, actor=actor)
 
         try:
@@ -115,6 +151,7 @@ class SelfStudyJourneyOrchestrator:
             receipt.mark_failed(code=code or "LEARNING_JOURNEY_ACTION_FAILED", message=message)
             receipt.save()
             transaction.on_commit(lambda: _publish(self.events, "learning_journey.action_failed", receipt, {"failure_code": receipt.failure_code}))
+            LearningJourneyOperationService().create_for_receipt(receipt=receipt, status="FAILED", phase="failed")
             logger.info(
                 "learning_journey.action_failed",
                 extra={"journey_id": str(journey.id), "action_code": command.action_code, "receipt_id": str(receipt.id), "failure_code": receipt.failure_code},
@@ -131,6 +168,7 @@ class SelfStudyJourneyOrchestrator:
             },
         )
         receipt.save()
+        LearningJourneyOperationService().create_for_receipt(receipt=receipt, status="SUCCEEDED", phase="completed")
         transaction.on_commit(lambda: _publish(self.events, "learning_journey.action_succeeded", receipt, {"journey_status": synchronized.status}))
         milestone = self._milestone_event(command.action_code)
         if milestone:
@@ -321,6 +359,7 @@ class SelfStudyJourneyOrchestrator:
         raise ValidationError("Diagnostic is not available.", code="DIAGNOSTIC_NOT_READY")
 
     def _response(self, *, receipt: LearningJourneyActionReceipt, journey_id, actor: User, replayed: bool = False) -> dict:
+        operation = receipt.operations.order_by("-started_at").first()
         return {
             "receipt": {
                 "id": str(receipt.id),
@@ -331,6 +370,30 @@ class SelfStudyJourneyOrchestrator:
                 "replayed": replayed,
             },
             "journey": GetLearningJourneyService().execute(journey_id=journey_id, actor=actor),
+            "operation": {
+                "result": receipt.status,
+                "receipt_id": str(receipt.id),
+                "operation_id": str(operation.id) if operation else "",
+                "failure_code": receipt.failure_code,
+            },
+        }
+
+    def _conflict_response(self, *, receipt: LearningJourneyActionReceipt, journey_id, actor: User, code: str, message: str) -> dict:
+        return {
+            "receipt": {
+                "id": str(receipt.id),
+                "action_code": receipt.action_code,
+                "status": LearningJourneyActionReceiptStatus.CONFLICT,
+                "failure_code": code,
+                "failure_message": message,
+                "replayed": True,
+            },
+            "journey": GetLearningJourneyService().execute(journey_id=journey_id, actor=actor),
+            "operation": {
+                "result": LearningJourneyActionReceiptStatus.CONFLICT,
+                "receipt_id": str(receipt.id),
+                "failure_code": code,
+            },
         }
 
     def _milestone_event(self, action_code: str) -> str:

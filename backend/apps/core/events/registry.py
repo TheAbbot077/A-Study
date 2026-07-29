@@ -365,5 +365,14 @@ for event_name in [
     "institutional_completion.ready",
     "institutional_completion.completed",
     "institutional_authority.updated",
+    "learning_journey.operation_started",
+    "learning_journey.operation_completed",
+    "learning_journey.operation_failed",
+    "learning_journey.projection_rebuilt",
+    "learning_journey.integrity_finding_detected",
+    "learning_journey.integrity_finding_resolved",
+    "learning_journey.recovery_started",
+    "learning_journey.recovery_completed",
+    "learning_journey.command_conflicted",
 ]:
     default_event_registry._subscribers.setdefault(event_name, [])

@@ -10,10 +10,17 @@ from rest_framework.response import Response
 
 from ..application.commands import ExecuteLearningJourneyActionCommand
 from ..application.orchestration import SelfStudyJourneyOrchestrator
+from ..application.operational import (
+    LearningJourneyCollectionService,
+    LearningJourneyErrorEnvelope,
+    LearningJourneyIntegrityService,
+    LearningJourneyOperationService,
+    LearningJourneyOperationalViewService,
+)
 from ..application.progression_services import CompetencyProgressSnapshotService
 from ..application.queries import GetLearningJourneyService, ListLearnerJourneysService
 from ..application.services import CreateLearningJourneyService, LearningJourneyLifecycleService, SynchronizeLearningJourneyService
-from ..domain.models import LearningJourney
+from ..domain.models import LearningJourney, LearningJourneyOperation
 from .serializers import (
     CreateInstitutionalJourneySerializer,
     CreateSelfStudyJourneySerializer,
@@ -23,11 +30,8 @@ from .serializers import (
 
 
 def problem(exc: DjangoValidationError, response_status=status.HTTP_400_BAD_REQUEST):
-    messages = exc.messages if hasattr(exc, "messages") else [str(exc)]
-    code = getattr(exc, "code", "") or "VALIDATION_ERROR"
-    if hasattr(exc, "error_list") and exc.error_list:
-        code = exc.error_list[0].code or code
-    return Response({"code": code, "detail": messages[0], "blockers": messages}, status=response_status)
+    envelope = LearningJourneyErrorEnvelope.validation(exc)
+    return Response(envelope, status=response_status)
 
 
 class LearningJourneyViewSet(viewsets.ViewSet):
@@ -39,6 +43,10 @@ class LearningJourneyViewSet(viewsets.ViewSet):
     lifecycle_service_class = LearningJourneyLifecycleService
     orchestrator_class = SelfStudyJourneyOrchestrator
     progress_snapshot_service_class = CompetencyProgressSnapshotService
+    collection_service_class = LearningJourneyCollectionService
+    operational_view_service_class = LearningJourneyOperationalViewService
+    operation_service_class = LearningJourneyOperationService
+    integrity_service_class = LearningJourneyIntegrityService
 
     def _create_service(self):
         return self.create_service_class()
@@ -61,8 +69,33 @@ class LearningJourneyViewSet(viewsets.ViewSet):
     def _progress_snapshot_service(self):
         return self.progress_snapshot_service_class()
 
+    def _collection_service(self):
+        return self.collection_service_class()
+
+    def _operational_view_service(self):
+        return self.operational_view_service_class()
+
+    def _operation_service(self):
+        return self.operation_service_class()
+
+    def _integrity_service(self):
+        return self.integrity_service_class()
+
     def list(self, request):
-        return Response(self._list_service().execute(actor=request.user))
+        filters = {
+            "journey_type": request.query_params.get("journey_type"),
+            "status": request.query_params.get("status"),
+            "institution": request.query_params.get("institution"),
+            "learner": request.query_params.get("learner"),
+            "active": request.query_params.get("active"),
+            "blocked": request.query_params.get("blocked"),
+            "completion_ready": request.query_params.get("completion_ready"),
+        }
+        return Response(self._collection_service().execute(actor=request.user, filters={key: value for key, value in filters.items() if value not in (None, "")}))
+
+    @action(detail=False, methods=["get"], url_path="active")
+    def active(self, request):
+        return Response(self._collection_service().active(actor=request.user))
 
     def retrieve(self, request, pk=None):
         try:
@@ -143,12 +176,15 @@ class LearningJourneyViewSet(viewsets.ViewSet):
                 action_code=str(action_code or "").upper().replace("-", "_"),
                 actor_id=str(request.user.id),
                 idempotency_key=serializer.validated_data.get("idempotency_key", ""),
+                expected_journey_version=serializer.validated_data.get("expected_journey_version"),
                 payload=serializer.validated_data.get("payload", {}),
                 request_context={"path": request.path, "method": request.method},
             )
             result = self._orchestrator().execute(command=command, actor=request.user)
             response_status = status.HTTP_200_OK
             if result["receipt"]["status"] == "REJECTED":
+                response_status = status.HTTP_422_UNPROCESSABLE_ENTITY
+            if result["receipt"]["status"] == "CONFLICT":
                 response_status = status.HTTP_409_CONFLICT
             if result["receipt"]["status"] == "FAILED":
                 response_status = status.HTTP_400_BAD_REQUEST
@@ -173,6 +209,57 @@ class LearningJourneyViewSet(viewsets.ViewSet):
     def progress(self, request, pk=None):
         try:
             return Response(self._progress_snapshot_service().journey_progress(journey_id=pk, actor=request.user))
+        except LearningJourney.DoesNotExist as exc:
+            raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+
+    @action(detail=True, methods=["get"], url_path="activity")
+    def activity(self, request, pk=None):
+        try:
+            journey = self._operational_view_service().execute(journey_id=pk, actor=request.user)
+            event_type = request.query_params.get("event_type")
+            activity = journey["recent_activity"]
+            if event_type:
+                activity = [item for item in activity if item["event_code"] == event_type]
+            return Response({"journey_id": str(pk), "activity": activity})
+        except LearningJourney.DoesNotExist as exc:
+            raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+
+    @action(detail=True, methods=["get"], url_path="actions")
+    def actions(self, request, pk=None):
+        try:
+            journey = self._operational_view_service().execute(journey_id=pk, actor=request.user)
+            return Response({"journey_id": str(pk), "actions": journey["available_actions"]})
+        except LearningJourney.DoesNotExist as exc:
+            raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+
+    @action(detail=True, methods=["get"], url_path=r"operations/(?P<operation_id>[^/.]+)")
+    def operation(self, request, pk=None, operation_id=None):
+        try:
+            return Response(self._operation_service().get(journey_id=pk, operation_id=operation_id, actor=request.user))
+        except (LearningJourney.DoesNotExist, LearningJourneyOperation.DoesNotExist) as exc:
+            raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+
+    @action(detail=True, methods=["get"], url_path="integrity")
+    def integrity(self, request, pk=None):
+        try:
+            return Response(self._integrity_service().check(journey_id=pk, actor=request.user, repair=False))
+        except LearningJourney.DoesNotExist as exc:
+            raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+
+    @action(detail=True, methods=["post"], url_path="recover")
+    def recover(self, request, pk=None):
+        try:
+            return Response(self._integrity_service().check(journey_id=pk, actor=request.user, repair=True))
         except LearningJourney.DoesNotExist as exc:
             raise NotFound("LEARNING_JOURNEY_NOT_FOUND") from exc
         except DjangoPermissionDenied as exc:

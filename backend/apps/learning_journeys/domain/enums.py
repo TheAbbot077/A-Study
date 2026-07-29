@@ -135,6 +135,52 @@ class LearningJourneyActionReceiptStatus(models.TextChoices):
     FAILED = "FAILED", "Failed"
     REJECTED = "REJECTED", "Rejected"
     NO_OP = "NO_OP", "No-op"
+    CONFLICT = "CONFLICT", "Conflict"
+
+
+class LearningJourneyOperationStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    RUNNING = "RUNNING", "Running"
+    SUCCEEDED = "SUCCEEDED", "Succeeded"
+    FAILED = "FAILED", "Failed"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+class LearningJourneyCommandResult(models.TextChoices):
+    SUCCEEDED = "SUCCEEDED", "Succeeded"
+    ACCEPTED = "ACCEPTED", "Accepted"
+    REJECTED = "REJECTED", "Rejected"
+    NO_OP = "NO_OP", "No-op"
+    FAILED = "FAILED", "Failed"
+    CONFLICT = "CONFLICT", "Conflict"
+
+
+class LearningJourneyIntegritySeverity(models.TextChoices):
+    INFO = "INFO", "Info"
+    WARNING = "WARNING", "Warning"
+    BLOCKING = "BLOCKING", "Blocking"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+class LearningJourneyIntegrityFindingStatus(models.TextChoices):
+    OPEN = "OPEN", "Open"
+    ACKNOWLEDGED = "ACKNOWLEDGED", "Acknowledged"
+    RESOLVED = "RESOLVED", "Resolved"
+    DISMISSED = "DISMISSED", "Dismissed"
+
+
+class LearningJourneyIntegrityFindingCode(models.TextChoices):
+    MISSING_SOURCE_BINDING = "MISSING_SOURCE_BINDING", "Missing source binding"
+    DUPLICATE_ACTIVE_SUBJECT_BINDING = "DUPLICATE_ACTIVE_SUBJECT_BINDING", "Duplicate active subject binding"
+    JOURNEY_SOURCE_LEARNER_MISMATCH = "JOURNEY_SOURCE_LEARNER_MISMATCH", "Journey source learner mismatch"
+    JOURNEY_INSTITUTION_MISMATCH = "JOURNEY_INSTITUTION_MISMATCH", "Journey institution mismatch"
+    INVALID_ACTIVE_SESSION_REFERENCE = "INVALID_ACTIVE_SESSION_REFERENCE", "Invalid active session reference"
+    INVALID_PLAN_REFERENCE = "INVALID_PLAN_REFERENCE", "Invalid plan reference"
+    STALE_AUTHORITY_PROJECTION = "STALE_AUTHORITY_PROJECTION", "Stale authority projection"
+    PROJECTION_VERSION_MISMATCH = "PROJECTION_VERSION_MISMATCH", "Projection version mismatch"
+    TERMINAL_JOURNEY_WITH_ACTIVE_OPERATION = "TERMINAL_JOURNEY_WITH_ACTIVE_OPERATION", "Terminal journey with active operation"
+    INSTITUTIONAL_JOURNEY_WITHOUT_ACTIVE_AUTHORITY = "INSTITUTIONAL_JOURNEY_WITHOUT_ACTIVE_AUTHORITY", "Institutional journey without active authority"
+    SELF_STUDY_JOURNEY_WITH_INSTITUTIONAL_AUTHORITY = "SELF_STUDY_JOURNEY_WITH_INSTITUTIONAL_AUTHORITY", "Self-study journey with institutional authority"
 
 
 class LearningCompetencyProgressState(models.TextChoices):
