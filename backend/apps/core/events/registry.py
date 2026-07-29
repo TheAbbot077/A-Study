@@ -328,5 +328,12 @@ for event_name in [
     "learning_identity.preference.selected",
     "learning_identity.preference.updated",
     "learning_identity.preference.withdrawn",
+    "learning_journey.created",
+    "learning_journey.synchronized",
+    "learning_journey.state_changed",
+    "learning_journey.paused",
+    "learning_journey.resumed",
+    "learning_journey.withdrawn",
+    "learning_journey.archived",
 ]:
     default_event_registry._subscribers.setdefault(event_name, [])
