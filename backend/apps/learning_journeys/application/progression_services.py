@@ -104,6 +104,8 @@ class CompetencyProgressionService:
                 "unlock_state": LearningCompetencyUnlockState.AVAILABLE,
             },
         )
+        if not created and progress.latest_mastery_decision_id == mastery.id:
+            return progress
         old_state = progress.state
         old_unlock = progress.unlock_state
         decision = self.policy.decide(current_state=progress.state, current_unlock_state=progress.unlock_state, mastery_decision=mastery)
