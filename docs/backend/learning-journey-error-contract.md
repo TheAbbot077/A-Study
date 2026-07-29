@@ -25,9 +25,8 @@ HTTP mapping follows project conventions:
 - `401`: unauthenticated
 - `403`: authenticated but unauthorized
 - `404`: visible journey/resource not found
-- `409`: version, state, operation, or idempotency conflict
-- `422`: recognized action but unavailable under policy
+- `409`: version, state, operation, idempotency conflict, or recognized action unavailable under current journey policy
+- `422`: reserved for future semantic-validation use if the project adopts it consistently
 - `500`: unexpected operational failure
 
 Raw Python exception text is not part of the public contract.
-

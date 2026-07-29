@@ -183,7 +183,7 @@ class LearningJourneyViewSet(viewsets.ViewSet):
             result = self._orchestrator().execute(command=command, actor=request.user)
             response_status = status.HTTP_200_OK
             if result["receipt"]["status"] == "REJECTED":
-                response_status = status.HTTP_422_UNPROCESSABLE_ENTITY
+                response_status = status.HTTP_409_CONFLICT
             if result["receipt"]["status"] == "CONFLICT":
                 response_status = status.HTTP_409_CONFLICT
             if result["receipt"]["status"] == "FAILED":
