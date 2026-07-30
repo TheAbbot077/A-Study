@@ -16,6 +16,8 @@ from ..application.experience_services import (
     SelfStudyPlanExperienceService,
 )
 from ..application.services import CreateSelfStudyIntentService, UpdateSelfStudyIntentService
+from ..application.teaching_runtime_services import IntelligentTeachingExperienceService
+from ..application.tutor_session_services import TutorSessionOpeningService
 from ..application.workspace_services import (
     SelfStudyOnboardingService,
     SelfStudyWorkspaceMaterialService,
@@ -52,6 +54,8 @@ class SelfStudyWorkspaceViewSet(viewsets.ViewSet):
     placement_summary_service_class = SelfStudyPlacementSummaryService
     plan_experience_service_class = SelfStudyPlanExperienceService
     learning_studio_service_class = LearningStudioExperienceService
+    tutor_session_opening_service_class = TutorSessionOpeningService
+    intelligent_teaching_service_class = IntelligentTeachingExperienceService
     conversational_onboarding_service_class = SelfStudyConversationalOnboardingService
 
     def _workspace_service(self):
@@ -74,6 +78,12 @@ class SelfStudyWorkspaceViewSet(viewsets.ViewSet):
 
     def _learning_studio_service(self):
         return self.learning_studio_service_class()
+
+    def _tutor_session_opening_service(self):
+        return self.tutor_session_opening_service_class()
+
+    def _intelligent_teaching_service(self):
+        return self.intelligent_teaching_service_class()
 
     def _conversational_onboarding_service(self):
         return self.conversational_onboarding_service_class()
@@ -476,6 +486,72 @@ class SelfStudyWorkspaceViewSet(viewsets.ViewSet):
                 "next_action": self._onboarding_service().summarize(workspace=workspace).next_action,
             }
         )
+
+    @action(detail=True, methods=["get"], url_path="tutor-session-opening")
+    def tutor_session_opening(self, request, pk=None):
+        self._workspace(request, pk)
+        return Response(self._tutor_session_opening_service().execute(workspace_id=pk, actor=request.user))
+
+    @action(detail=True, methods=["get"], url_path="learning-studio/session")
+    def intelligent_learning_session(self, request, pk=None):
+        self._workspace(request, pk)
+        return Response(self._intelligent_teaching_service().session(workspace_id=pk, actor=request.user))
+
+    @action(detail=True, methods=["post"], url_path="learning-studio/session/start")
+    def intelligent_learning_session_start(self, request, pk=None):
+        self._workspace(request, pk)
+        try:
+            return Response(self._intelligent_teaching_service().start(workspace_id=pk, actor=request.user), status=status.HTTP_202_ACCEPTED)
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except DjangoValidationError as exc:
+            return problem(exc)
+
+    @action(detail=True, methods=["post"], url_path="learning-studio/session/explanation-mode")
+    def intelligent_learning_explanation_mode(self, request, pk=None):
+        self._workspace(request, pk)
+        try:
+            return Response(
+                self._intelligent_teaching_service().explanation_mode(
+                    workspace_id=pk,
+                    actor=request.user,
+                    mode=str(request.data.get("mode", "")),
+                )
+            )
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except DjangoValidationError as exc:
+            return problem(exc)
+
+    @action(detail=True, methods=["post"], url_path="learning-studio/session/respond")
+    def intelligent_learning_respond(self, request, pk=None):
+        self._workspace(request, pk)
+        try:
+            return Response(
+                self._intelligent_teaching_service().respond(
+                    workspace_id=pk,
+                    actor=request.user,
+                    response_text=str(request.data.get("response_text", "")),
+                    interaction_type=str(request.data.get("interaction_type", "SOCRATIC_PROMPT")),
+                    idempotency_key=str(request.data.get("idempotency_key", "")),
+                    expected_version=request.data.get("expected_version"),
+                ),
+                status=status.HTTP_201_CREATED,
+            )
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except DjangoValidationError as exc:
+            return problem(exc)
+
+    @action(detail=True, methods=["post"], url_path="learning-studio/session/complete")
+    def intelligent_learning_session_complete(self, request, pk=None):
+        self._workspace(request, pk)
+        try:
+            return Response(self._intelligent_teaching_service().complete(workspace_id=pk, actor=request.user))
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except DjangoValidationError as exc:
+            return problem(exc)
 
     @action(detail=True, methods=["get"], url_path="learn/experience")
     def learn_experience(self, request, pk=None):

@@ -11,12 +11,16 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--limit", type=int, default=100)
+        parser.add_argument("--tenant-id", dest="tenant_id")
         parser.add_argument("--dry-run", action="store_true")
 
     def handle(self, *args, **options):
         queryset = LearningJourneyOperation.objects.select_related("journey", "receipt").filter(
             status__in=[LearningJourneyOperationStatus.PENDING, LearningJourneyOperationStatus.RUNNING]
-        )[: options["limit"]]
+        )
+        if options.get("tenant_id"):
+            queryset = queryset.filter(journey__institution_id=options["tenant_id"])
+        queryset = queryset.order_by("started_at", "id")[: options["limit"]]
         processed = orphaned = 0
         for operation in queryset:
             processed += 1

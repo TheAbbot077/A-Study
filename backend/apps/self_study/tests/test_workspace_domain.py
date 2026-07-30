@@ -28,6 +28,18 @@ class SelfStudyWorkspaceModelContractTests(SimpleTestCase):
             reverse("self-study-workspace-diagnostic-start", kwargs={"pk": workspace_id}),
             f"/api/self-study/workspaces/{workspace_id}/diagnostic/start/",
         )
+        self.assertEqual(
+            reverse("self-study-workspace-tutor-session-opening", kwargs={"pk": workspace_id}),
+            f"/api/self-study/workspaces/{workspace_id}/tutor-session-opening/",
+        )
+        self.assertEqual(
+            reverse("self-study-workspace-intelligent-learning-session", kwargs={"pk": workspace_id}),
+            f"/api/self-study/workspaces/{workspace_id}/learning-studio/session/",
+        )
+        self.assertEqual(
+            reverse("self-study-workspace-intelligent-learning-respond", kwargs={"pk": workspace_id}),
+            f"/api/self-study/workspaces/{workspace_id}/learning-studio/session/respond/",
+        )
 
 
 class SelfStudyNextActionTests(SimpleTestCase):

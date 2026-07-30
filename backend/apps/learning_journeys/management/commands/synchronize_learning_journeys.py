@@ -12,6 +12,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--journey-id", dest="journey_id")
+        parser.add_argument("--tenant-id", dest="tenant_id")
         parser.add_argument("--limit", type=int, default=100)
         parser.add_argument("--dry-run", action="store_true")
         parser.add_argument("--actor-email", dest="actor_email")
@@ -20,6 +21,8 @@ class Command(BaseCommand):
         queryset = LearningJourney.objects.select_related("learner").order_by("updated_at")
         if options["journey_id"]:
             queryset = queryset.filter(id=options["journey_id"])
+        if options.get("tenant_id"):
+            queryset = queryset.filter(institution_id=options["tenant_id"])
         queryset = queryset[: options["limit"]]
         actor = self._actor(options.get("actor_email"))
         processed = updated = failed = 0
@@ -42,4 +45,3 @@ class Command(BaseCommand):
         if not email:
             return None
         return get_user_model().objects.get(email=email)
-

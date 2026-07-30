@@ -18,7 +18,6 @@ from ..domain.enums import (
     LearningCompetencyUnlockState,
     LearningJourneyActionCode,
     LearningJourneyActionReceiptStatus,
-    LearningJourneyCommandResult,
     LearningJourneyIntegrityFindingCode,
     LearningJourneyIntegrityFindingStatus,
     LearningJourneyIntegritySeverity,
@@ -36,12 +35,10 @@ from ..domain.models import (
     LearningJourneyActionReceipt,
     LearningJourneyIntegrityFinding,
     LearningJourneyOperation,
-    LearningJourneySourceBinding,
 )
-from .action_policy import ACTION_COPY, SELF_STUDY_ACTIONS, SelfStudyJourneyActionPolicy
-from .authority import INSTITUTION_STAFF_ROLES, JourneyAuthorityResolver
-from .institutional_services import InstitutionalCompletionService
-from .progression_services import DEMONSTRATED_STATES, CompetencyProgressSnapshotService
+from .action_policy import ACTION_COPY
+from .authority import INSTITUTION_STAFF_ROLES
+from .progression_services import CompetencyProgressSnapshotService
 from .services import SynchronizeLearningJourneyService, can_read_journey
 
 
