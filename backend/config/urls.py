@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/learning-identity/', include('apps.learning_identity.api.urls')),
     path('api/learning-journeys/', include('apps.learning_journeys.api.urls')),
     path('api/institutional-learning-journeys/', include('apps.learning_journeys.api.institutional_urls')),
+    path('api/educational-organization/', include('apps.educational_organization.api.urls')),
     path('api/curricula/', include('apps.self_study.api.public_curriculum_urls')),
     path('api/curriculum-registry/', include('apps.self_study.api.curriculum_urls')),
 ]

@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "apps.self_study.apps.SelfStudyConfig",
     "apps.learning_identity.apps.LearningIdentityConfig",
     "apps.learning_journeys.apps.LearningJourneysConfig",
+    "apps.educational_organization.apps.EducationalOrganizationConfig",
 ]
 
 MIDDLEWARE = [
