@@ -58,14 +58,22 @@ def test_event_dispatcher_continues_when_one_subscriber_fails():
     logger.exception.assert_called_once()
 
 
-def test_event_publisher_dispatches_events():
-    dispatcher = Mock()
-    publisher = EventPublisher(dispatcher=dispatcher)
-    event = BusinessEvent.create("identity.user_registered")
+def test_event_publisher_records_event_and_schedules_dispatch():
+    publisher = EventPublisher(dispatcher=Mock())
+    event = BusinessEvent.create("identity.user_registered", payload={"user_id": "1", "display_name": "Learner"})
 
-    publisher.publish(event)
+    with patch("apps.core.events.publisher.RecordBusinessEventService") as record_service, patch(
+        "apps.core.events.publisher.transaction.on_commit"
+    ) as on_commit:
+        record = Mock(id="event-123")
+        record_service.return_value.execute.return_value = record
 
-    dispatcher.dispatch.assert_called_once_with(event)
+        publisher.publish(event)
+
+    record_service.return_value.execute.assert_called_once_with(event)
+    on_commit.assert_called_once()
+    scheduled_callback = on_commit.call_args.args[0]
+    assert callable(scheduled_callback)
 
 
 def test_identity_service_register_user_publishes_identity_event():

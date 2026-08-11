@@ -125,7 +125,14 @@ class ConversationOrchestratorServiceTests(SimpleTestCase):
 
         self.assertEqual(
             [call.args[0].event_name for call in publisher.publish.call_args_list],
-            ["learning.conversation_initialized", "learning.turn_added", "learning.window_trimmed"],
+            [
+                "learning.context_assembled",
+                "learning.grounding_package_created",
+                "learning.strategy_selected",
+                "learning.conversation_initialized",
+                "learning.turn_added",
+                "learning.window_trimmed",
+            ],
         )
 
     def test_conversation_events_are_registered_for_discovery(self):

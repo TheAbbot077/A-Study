@@ -1,18 +1,50 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
 from .subscribers import EventSubscriber
+
+
+@dataclass(frozen=True)
+class EventSubscriberRegistration:
+    consumer_key: str
+    subscriber: EventSubscriber
 
 
 class EventRegistry:
     def __init__(self) -> None:
-        self._subscribers: dict[str, list[EventSubscriber]] = {}
+        self._subscribers: dict[str, list[EventSubscriberRegistration]] = {}
 
-    def subscribe(self, event_name: str, subscriber: EventSubscriber) -> None:
-        self._subscribers.setdefault(event_name, []).append(subscriber)
+    def subscribe(self, event_name: str, subscriber: EventSubscriber, consumer_key: str | None = None) -> None:
+        self._subscribers.setdefault(event_name, []).append(
+            EventSubscriberRegistration(
+                consumer_key=consumer_key or self._derive_consumer_key(subscriber),
+                subscriber=subscriber,
+            )
+        )
 
     def get_subscribers(self, event_name: str) -> list[EventSubscriber]:
+        return [registration.subscriber for registration in self._subscribers.get(event_name, [])]
+
+    def get_registrations(self, event_name: str) -> list[EventSubscriberRegistration]:
         return list(self._subscribers.get(event_name, []))
+
+    def get_registration(self, event_name: str, consumer_key: str) -> EventSubscriberRegistration | None:
+        for registration in self._subscribers.get(event_name, []):
+            if registration.consumer_key == consumer_key:
+                return registration
+        return None
 
     def clear(self) -> None:
         self._subscribers.clear()
+
+    def _derive_consumer_key(self, subscriber: EventSubscriber) -> str:
+        explicit_key = getattr(subscriber, "consumer_key", "")
+        if isinstance(explicit_key, str) and explicit_key.strip():
+            return explicit_key.strip()
+        module = getattr(subscriber, "__module__", subscriber.__class__.__module__)
+        qualname = getattr(subscriber, "__qualname__", subscriber.__class__.__qualname__)
+        return f"{module}.{qualname}"
 
 
 default_event_registry = EventRegistry()

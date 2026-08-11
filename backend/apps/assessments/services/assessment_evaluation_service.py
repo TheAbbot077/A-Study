@@ -9,8 +9,13 @@ from apps.assessments.domain.models import (
     AssessmentResponse,
     AssessmentResult,
     AssessmentState,
+    AssessmentEvaluationStatus,
+    AssessmentEvaluationOutcome,
     EvaluatorType,
 )
+from apps.assessments.services.evaluation_strategy_service import ResolveEvaluationStrategyService
+from apps.assessments.services.evaluation_policy_service import ResolveEvaluationPolicyService
+from apps.assessments.services.evaluation_policy_validation_service import ValidateEvaluationPolicyService
 from apps.core.exceptions import DomainValidationError, LifecycleTransitionError
 from apps.core.events import BusinessEvent, EventPublisher
 
@@ -18,15 +23,37 @@ from apps.core.events import BusinessEvent, EventPublisher
 class AssessmentEvaluationService:
     def __init__(self, event_publisher: Optional[EventPublisher] = None) -> None:
         self.event_publisher = event_publisher or EventPublisher()
+        self.strategy_service = ResolveEvaluationStrategyService()
+        self.policy_service = ResolveEvaluationPolicyService()
+        self.policy_validation_service = ValidateEvaluationPolicyService()
 
     def evaluate_response(self, response: AssessmentResponse) -> AssessmentEvaluation:
         score, is_correct, feedback, metadata = self._deterministic_score(response)
+        strategy = self.strategy_service.resolve(item=response.item, response=response)
+        policy = self.policy_service.resolve(response.attempt.assessment.purpose)
+        experience = getattr(response.attempt, "experience", None)
+        validation = self.policy_validation_service.validate(policy=getattr(experience, "environment_policy", None), item=response.item)
+        if not validation.valid:
+            return self.create_evaluation(
+                response=response,
+                score=0.0,
+                is_correct=None,
+                feedback="Evaluation blocked by policy conflict.",
+                metadata={"reason": validation.reason_code, "blockers": validation.blockers or []},
+                strategy=strategy,
+                policy=policy,
+                force_status=AssessmentEvaluationStatus.FAILED,
+                force_outcome=AssessmentEvaluationOutcome.NOT_EVALUABLE,
+                failure_code=validation.reason_code or "",
+            )
         evaluation = self.create_evaluation(
             response=response,
             score=score,
             is_correct=is_correct,
             feedback=feedback,
             metadata=metadata,
+            strategy=strategy,
+            policy=policy,
         )
         return evaluation
 
@@ -68,16 +95,41 @@ class AssessmentEvaluationService:
         is_correct: Optional[bool] = None,
         feedback: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
+        strategy=None,
+        policy=None,
+        force_status: str | None = None,
+        force_outcome: str | None = None,
+        failure_code: str = "",
     ) -> AssessmentEvaluation:
         if score < 0:
             raise DomainValidationError("Assessment evaluation score must be greater than or equal to 0.")
+        strategy = strategy or self.strategy_service.resolve(item=response.item, response=response)
+        policy = policy or self.policy_service.resolve(response.attempt.assessment.purpose)
+        outcome = self._outcome_for_score(score, is_correct, metadata)
         evaluation = AssessmentEvaluation.objects.create(
             response=response,
+            assessment_experience=getattr(response.attempt, "experience", None),
+            assessment_item=response.item,
+            learner=response.attempt.learner,
+            evaluation_policy_code=policy.policy_code,
+            evaluation_policy_version=policy.policy_version,
+            evaluation_strategy_code=strategy.strategy_code,
+            evaluation_strategy_version=strategy.strategy_version,
+            answer_contract_reference=strategy.answer_contract_reference,
+            answer_contract_version=strategy.answer_contract_version,
+            answer_contract_checksum=strategy.answer_contract_checksum,
+            status=force_status or (AssessmentEvaluationStatus.COMPLETED if outcome != AssessmentEvaluationOutcome.NOT_EVALUABLE else AssessmentEvaluationStatus.FAILED),
+            outcome=force_outcome or outcome,
             score=score,
             max_score=1.0,
             is_correct=is_correct,
             feedback=feedback or "",
             evaluator_type=EvaluatorType.DETERMINISTIC,
+            evaluator_reference="deterministic",
+            idempotency_fingerprint=str(response.id),
+            started_at=None,
+            completed_at=None,
+            failure_code=failure_code,
             evaluation_data=metadata or {},
         )
         self.event_publisher.publish(
@@ -95,6 +147,13 @@ class AssessmentEvaluationService:
             )
         )
         return evaluation
+
+    def _outcome_for_score(self, score: float, is_correct: Optional[bool], metadata: Optional[dict[str, Any]]) -> str:
+        if metadata and metadata.get("reason") == "unsupported_item_type":
+            return AssessmentEvaluationOutcome.NOT_EVALUABLE
+        if is_correct is None:
+            return AssessmentEvaluationOutcome.INDETERMINATE
+        return AssessmentEvaluationOutcome.CORRECT if score >= 1.0 and is_correct else AssessmentEvaluationOutcome.INCORRECT
 
     def create_or_update_result(
         self,

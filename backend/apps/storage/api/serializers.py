@@ -14,6 +14,9 @@ class StoredFileSerializer(serializers.ModelSerializer):
             "size_bytes",
             "checksum",
             "provider",
+            "owner",
+            "tenant",
+            "security_scope",
             "created_at",
             "updated_at",
         ]

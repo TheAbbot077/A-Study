@@ -3,6 +3,7 @@ from rest_framework import serializers
 from apps.assessments.domain.models import (
     Assessment,
     AssessmentDeliverySession,
+    AssessmentExperience,
     AssessmentResult,
     LearningEvidence,
     MasteryProfile,
@@ -122,3 +123,141 @@ class StartMasteryCheckSerializer(serializers.Serializer):
 class SubmitAssessmentAnswerSerializer(serializers.Serializer):
     item_id = serializers.UUIDField()
     response_data = serializers.JSONField()
+
+
+class AssessmentExperienceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AssessmentExperience
+        fields = [
+            "id",
+            "learner",
+            "learning_journey_id",
+            "institution_id",
+            "content_concept",
+            "purpose",
+            "state",
+            "assessment",
+            "assessment_strategy_type",
+            "assessment_attempt",
+            "delivery_session",
+            "evaluation",
+            "policy_version",
+            "attempt_number",
+            "previous_experience",
+            "blockers",
+            "current_step",
+            "feedback_available",
+            "failure_code",
+            "ready_at",
+            "started_at",
+            "submitted_at",
+            "evaluated_at",
+            "completed_at",
+            "cancelled_at",
+            "expired_at",
+            "failed_at",
+            "created_at",
+            "updated_at",
+            "version",
+        ]
+        read_only_fields = fields
+
+
+class AssessmentExperienceProductStateSerializer(serializers.Serializer):
+    experience_id = serializers.CharField()
+    purpose = serializers.CharField()
+    status = serializers.CharField()
+    current_step = serializers.JSONField()
+    available_actions = serializers.ListField(child=serializers.CharField())
+    blockers = serializers.ListField(child=serializers.CharField())
+    attempt = serializers.JSONField()
+    feedback_available = serializers.BooleanField()
+    tool_policy = serializers.JSONField()
+    environment = serializers.JSONField(required=False)
+
+
+class AssessmentEnvironmentSerializer(serializers.Serializer):
+    policy = serializers.JSONField()
+    state = serializers.CharField()
+    capabilities = serializers.JSONField()
+    blockers = serializers.JSONField()
+    resolved_at = serializers.JSONField(allow_null=True)
+    source_checksum = serializers.CharField()
+
+
+class AssessmentEvaluationProjectionSerializer(serializers.Serializer):
+    experience_id = serializers.CharField()
+    evaluation_count = serializers.IntegerField()
+    latest_evaluation = serializers.JSONField(allow_null=True)
+    latest_result = serializers.JSONField(allow_null=True)
+    policy = serializers.JSONField(allow_null=True)
+    strategy = serializers.JSONField(allow_null=True)
+    projected_at = serializers.JSONField(allow_null=True)
+
+
+class AssessmentEvidenceProjectionSerializer(serializers.Serializer):
+    experience_id = serializers.CharField()
+    evidence_count = serializers.IntegerField()
+    latest_evidence = serializers.JSONField(allow_null=True)
+    policy = serializers.JSONField(allow_null=True)
+    target = serializers.JSONField(allow_null=True)
+    projected_at = serializers.JSONField(allow_null=True)
+
+
+class MasteryInterpretationSerializer(serializers.Serializer):
+    learner_id = serializers.CharField()
+    content_concept_id = serializers.CharField()
+    policy = serializers.JSONField()
+    evidence_count = serializers.IntegerField()
+    authoritative_evidence_ids = serializers.ListField(child=serializers.CharField())
+    current_decision = serializers.CharField()
+    current_confidence = serializers.FloatField()
+    state = serializers.CharField()
+    explanation = serializers.CharField()
+    previous_decision_id = serializers.CharField(allow_null=True, required=False)
+    updated_at = serializers.CharField(allow_null=True, required=False)
+
+
+class RecoveryObservationRequestSerializer(serializers.Serializer):
+    learner_id = serializers.CharField()
+    target_id = serializers.CharField()
+    origin_target_id = serializers.CharField()
+    pedagogical_decision_id = serializers.CharField(allow_null=True, required=False)
+    recovery_reason = serializers.CharField()
+    policy = serializers.JSONField()
+    cycle_number = serializers.IntegerField()
+    status = serializers.CharField()
+    mastery_state = serializers.CharField()
+    remediation_plan_id = serializers.CharField(allow_null=True, required=False)
+    learning_journey_id = serializers.CharField(allow_null=True, required=False)
+    recovery_obsolete = serializers.BooleanField()
+    next_action = serializers.CharField()
+
+
+class ReassessmentBlueprintSerializer(serializers.Serializer):
+    target_id = serializers.CharField()
+    assessment_purpose = serializers.CharField()
+    recovery_reason = serializers.CharField()
+    required_evidence_role = serializers.CharField()
+    item_reuse_policy = serializers.CharField()
+    prior_item_ids = serializers.ListField(child=serializers.CharField())
+    prior_exposure_count = serializers.IntegerField()
+    assessment_environment_reference = serializers.JSONField()
+    policy = serializers.JSONField()
+
+
+class RecoveryProjectionSerializer(serializers.Serializer):
+    request = RecoveryObservationRequestSerializer()
+    blueprint = ReassessmentBlueprintSerializer()
+
+
+class ReconciledRecoverySerializer(serializers.Serializer):
+    learner_id = serializers.CharField()
+    target_id = serializers.CharField()
+    recovery_status = serializers.CharField()
+    reconciliation_state = serializers.CharField()
+    current_mastery_state = serializers.CharField()
+    current_pedagogical_decision = serializers.CharField()
+    reason_code = serializers.CharField()
+    recovery = serializers.JSONField()
+    reconciled_at = serializers.CharField(allow_null=True, required=False)

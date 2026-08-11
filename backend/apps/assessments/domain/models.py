@@ -67,6 +67,88 @@ class AssessmentState(models.TextChoices):
     CANCELLED = "cancelled", "Cancelled"
 
 
+class AssessmentPurpose(models.TextChoices):
+    ENTRY_DIAGNOSTIC = "entry_diagnostic", "Entry Diagnostic"
+    PREREQUISITE_CHECK = "prerequisite_check", "Prerequisite Check"
+    CONCEPT_CHECK = "concept_check", "Concept Check"
+    FORMATIVE = "formative", "Formative"
+    PRACTICE = "practice", "Practice"
+    SUMMATIVE = "summative", "Summative"
+    REMEDIATION_CHECK = "remediation_check", "Remediation Check"
+
+
+class AssessmentEnvironmentPolicyStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    ACTIVE = "active", "Active"
+    RETIRED = "retired", "Retired"
+    SUPERSEDED = "superseded", "Superseded"
+
+
+class AssessmentCapabilityDisposition(models.TextChoices):
+    ALLOWED = "ALLOWED", "Allowed"
+    PROHIBITED = "PROHIBITED", "Prohibited"
+    RESTRICTED = "RESTRICTED", "Restricted"
+    REQUIRED = "REQUIRED", "Required"
+
+
+class AssessmentEnvironmentPolicy(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code = models.CharField(max_length=96)
+    version = models.CharField(max_length=64)
+    purpose = models.CharField(max_length=50, choices=AssessmentPurpose.choices)
+    status = models.CharField(max_length=16, choices=AssessmentEnvironmentPolicyStatus.choices, default=AssessmentEnvironmentPolicyStatus.DRAFT)
+    effective_from = models.DateTimeField(default=timezone.now)
+    effective_to = models.DateTimeField(null=True, blank=True)
+    checksum = models.CharField(max_length=128, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    retired_at = models.DateTimeField(null=True, blank=True)
+    superseded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "assessment_environment_policy"
+        constraints = [
+            models.UniqueConstraint(fields=["code", "version"], name="assessment_env_policy_code_version_unique"),
+        ]
+        indexes = [
+            models.Index(fields=["purpose", "status"], name="assess_env_policy_ps_idx"),
+        ]
+
+
+class AssessmentEnvironmentRule(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    policy = models.ForeignKey(AssessmentEnvironmentPolicy, on_delete=models.CASCADE, related_name="rules")
+    capability_code = models.CharField(max_length=96)
+    disposition = models.CharField(max_length=16, choices=AssessmentCapabilityDisposition.choices)
+    restriction_type = models.CharField(max_length=64, blank=True, default="")
+    restriction_config = models.JSONField(default=dict, blank=True)
+    reason_code = models.CharField(max_length=96, blank=True, default="")
+    priority = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "assessment_environment_rule"
+        constraints = [
+            models.UniqueConstraint(fields=["policy", "capability_code"], name="assessment_env_rule_policy_capability_unique"),
+        ]
+        indexes = [
+            models.Index(fields=["policy", "priority"], name="assess_env_rule_pri_idx"),
+        ]
+
+
+class AssessmentExperienceState(models.TextChoices):
+    CREATED = "created", "Created"
+    READY = "ready", "Ready"
+    IN_PROGRESS = "in_progress", "In Progress"
+    AWAITING_RESPONSE = "awaiting_response", "Awaiting Response"
+    SUBMITTED = "submitted", "Submitted"
+    EVALUATING = "evaluating", "Evaluating"
+    EVALUATED = "evaluated", "Evaluated"
+    COMPLETED = "completed", "Completed"
+    CANCELLED = "cancelled", "Cancelled"
+    EXPIRED = "expired", "Expired"
+    FAILED = "failed", "Failed"
+
+
 class AssessmentItemType(models.TextChoices):
     MULTIPLE_CHOICE = "multiple_choice", "Multiple Choice"
     SHORT_ANSWER = "short_answer", "Short Answer"
@@ -111,6 +193,24 @@ class EvaluatorType(models.TextChoices):
     HUMAN = "human", "Human"
     AI = "ai", "AI"
     SYSTEM = "system", "System"
+
+
+class AssessmentEvaluationStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    EVALUATING = "evaluating", "Evaluating"
+    COMPLETED = "completed", "Completed"
+    REQUIRES_REVIEW = "requires_review", "Requires Review"
+    FAILED = "failed", "Failed"
+    SUPERSEDED = "superseded", "Superseded"
+
+
+class AssessmentEvaluationOutcome(models.TextChoices):
+    CORRECT = "correct", "Correct"
+    PARTIALLY_CORRECT = "partially_correct", "Partially Correct"
+    INCORRECT = "incorrect", "Incorrect"
+    INDETERMINATE = "indeterminate", "Indeterminate"
+    NOT_EVALUABLE = "not_evaluable", "Not Evaluable"
+    INVALID_RESPONSE = "invalid_response", "Invalid Response"
 
 
 class ItemDifficulty(models.TextChoices):
@@ -369,11 +469,33 @@ class AssessmentEvaluation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     response = models.OneToOneField(AssessmentResponse, on_delete=models.CASCADE, related_name="evaluation")
     evaluator = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="assessment_evaluations")
+    assessment_experience = models.ForeignKey("AssessmentExperience", on_delete=models.PROTECT, null=True, blank=True, related_name="evaluations")
+    assessment_item = models.ForeignKey(AssessmentItem, on_delete=models.PROTECT, null=True, blank=True, related_name="evaluations")
+    learner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="assessment_response_evaluations")
+    evaluation_policy_code = models.CharField(max_length=96, default="")
+    evaluation_policy_version = models.CharField(max_length=64, default="")
+    evaluation_strategy_code = models.CharField(max_length=96, default="")
+    evaluation_strategy_version = models.CharField(max_length=64, default="")
+    answer_contract_reference = models.CharField(max_length=96, default="")
+    answer_contract_version = models.CharField(max_length=64, default="")
+    answer_contract_checksum = models.CharField(max_length=128, default="")
+    status = models.CharField(max_length=32, choices=AssessmentEvaluationStatus.choices, default=AssessmentEvaluationStatus.PENDING)
+    outcome = models.CharField(max_length=32, choices=AssessmentEvaluationOutcome.choices, default=AssessmentEvaluationOutcome.INDETERMINATE)
     score = models.FloatField(default=0.0)
     max_score = models.FloatField(default=1.0)
     is_correct = models.BooleanField(null=True, blank=True)
     feedback = models.TextField(blank=True)
     evaluator_type = models.CharField(max_length=50, choices=EvaluatorType.choices, default=EvaluatorType.DETERMINISTIC)
+    evaluator_reference = models.CharField(max_length=96, blank=True, default="")
+    idempotency_fingerprint = models.CharField(max_length=128, default="")
+    requested_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    review_required_at = models.DateTimeField(null=True, blank=True)
+    supersedes = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="superseded_by")
+    supersession_reason = models.CharField(max_length=96, blank=True, default="")
+    failure_code = models.CharField(max_length=96, blank=True, default="")
     evaluation_data = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -402,6 +524,85 @@ class AssessmentResult(models.Model):
         indexes = [
             models.Index(fields=["attempt"], name="assessment_result_attempt_idx"),
         ]
+
+
+class AssessmentExperience(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    learner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="assessment_experiences")
+    learning_journey_id = models.UUIDField(null=True, blank=True)
+    institution_id = models.UUIDField(null=True, blank=True)
+    content_concept = models.ForeignKey(ContentConcept, on_delete=models.PROTECT, related_name="assessment_experiences")
+    purpose = models.CharField(max_length=50, choices=AssessmentPurpose.choices)
+    state = models.CharField(max_length=50, choices=AssessmentExperienceState.choices, default=AssessmentExperienceState.CREATED)
+    assessment = models.ForeignKey(Assessment, on_delete=models.PROTECT, related_name="assessment_experiences")
+    assessment_strategy_type = models.CharField(max_length=50, blank=True, default="")
+    assessment_attempt = models.OneToOneField(AssessmentAttempt, on_delete=models.SET_NULL, null=True, blank=True, related_name="experience")
+    delivery_session = models.OneToOneField(AssessmentDeliverySession, on_delete=models.SET_NULL, null=True, blank=True, related_name="experience")
+    evaluation = models.OneToOneField(AssessmentEvaluation, on_delete=models.SET_NULL, null=True, blank=True, related_name="experience")
+    policy_version = models.CharField(max_length=64, default="1")
+    policy_snapshot = models.JSONField(default=dict, blank=True)
+    environment_policy = models.ForeignKey(AssessmentEnvironmentPolicy, on_delete=models.PROTECT, null=True, blank=True, related_name="assessment_experiences")
+    environment_policy_version = models.CharField(max_length=64, blank=True, default="")
+    environment_policy_checksum = models.CharField(max_length=128, blank=True, default="")
+    attempt_number = models.PositiveIntegerField(default=1)
+    previous_experience = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="retry_experiences")
+    blockers = models.JSONField(default=list, blank=True)
+    current_step = models.JSONField(default=dict, blank=True)
+    feedback_available = models.BooleanField(default=False)
+    failure_code = models.CharField(max_length=64, blank=True)
+    ready_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    evaluated_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "assessment_experience"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["learner", "state"], name="assess_exp_learner_state_idx"),
+            models.Index(fields=["assessment", "purpose"], name="assess_exp_assess_purpose_idx"),
+            models.Index(fields=["learning_journey_id"], name="assess_exp_journey_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["learner", "assessment", "purpose"],
+                condition=models.Q(state__in=[AssessmentExperienceState.CREATED, AssessmentExperienceState.READY, AssessmentExperienceState.IN_PROGRESS, AssessmentExperienceState.AWAITING_RESPONSE, AssessmentExperienceState.SUBMITTED, AssessmentExperienceState.EVALUATING]),
+                name="assess_exp_unique_active_scope",
+            ),
+        ]
+
+    def set_state(self, state: str, *, when=None) -> bool:
+        if self.state == state:
+            return False
+        self.state = state
+        self.version += 1
+        when = when or timezone.now()
+        if state == AssessmentExperienceState.READY:
+            self.ready_at = self.ready_at or when
+        elif state == AssessmentExperienceState.IN_PROGRESS:
+            self.started_at = self.started_at or when
+        elif state == AssessmentExperienceState.AWAITING_RESPONSE:
+            self.started_at = self.started_at or when
+        elif state == AssessmentExperienceState.SUBMITTED:
+            self.submitted_at = self.submitted_at or when
+        elif state == AssessmentExperienceState.EVALUATED:
+            self.evaluated_at = self.evaluated_at or when
+        elif state == AssessmentExperienceState.COMPLETED:
+            self.completed_at = self.completed_at or when
+        elif state == AssessmentExperienceState.CANCELLED:
+            self.cancelled_at = self.cancelled_at or when
+        elif state == AssessmentExperienceState.EXPIRED:
+            self.expired_at = self.expired_at or when
+        elif state == AssessmentExperienceState.FAILED:
+            self.failed_at = self.failed_at or when
+        return True
 
 
 class LearningEvidence(models.Model):

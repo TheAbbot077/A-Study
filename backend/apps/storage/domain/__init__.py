@@ -1,3 +1,3 @@
-from .models import StoredFile
+from .models import StoredFile, StoredFileSecurityScope
 
-__all__ = ["StoredFile"]
+__all__ = ["StoredFile", "StoredFileSecurityScope"]

@@ -9,6 +9,7 @@ from apps.educational_organization.domain.models import (
     EducationalOrganization,
     Programme,
     TeachingAssignment,
+    TeachingAssignmentStatus,
 )
 
 

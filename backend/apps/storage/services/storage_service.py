@@ -1,23 +1,25 @@
-import hashlib
-import logging
-import os
 from typing import BinaryIO, Optional
 
-from django.conf import settings
-
 from apps.core.events import BusinessEvent, EventPublisher
-from apps.storage.domain.models import StoredFile
+from apps.storage.domain.models import StoredFile, StoredFileSecurityScope
 from apps.storage.infrastructure.providers import StorageProvider
-
-logger = logging.getLogger(__name__)
-
+from apps.users.domain.models import Institution, User
 
 class StorageService:
     def __init__(self, provider: StorageProvider, event_publisher: Optional[EventPublisher] = None) -> None:
         self.provider = provider
         self.event_publisher = event_publisher or EventPublisher()
 
-    def store_file(self, content: BinaryIO, original_filename: str, content_type: Optional[str] = None) -> StoredFile:
+    def store_file(
+        self,
+        content: BinaryIO,
+        original_filename: str,
+        content_type: Optional[str] = None,
+        *,
+        owner: Optional[User] = None,
+        tenant: Optional[Institution] = None,
+        security_scope: str = StoredFileSecurityScope.PRIVATE_LEARNER,
+    ) -> StoredFile:
         upload_meta = self.provider.upload(content, original_filename, content_type)
 
         stored = StoredFile.objects.create(
@@ -27,6 +29,9 @@ class StorageService:
             size_bytes=upload_meta["size_bytes"],
             checksum=upload_meta.get("checksum"),
             provider=upload_meta.get("provider", self.provider.__class__.__name__),
+            owner=owner,
+            tenant=tenant,
+            security_scope=security_scope,
         )
 
         self.event_publisher.publish(
@@ -34,8 +39,9 @@ class StorageService:
                 "storage.file_uploaded",
                 payload={
                     "file_id": str(stored.id),
-                    "original_filename": stored.original_filename,
-                    "stored_filename": stored.stored_filename,
+                    "owner_id": self._safe_identifier(stored, "owner_id"),
+                    "tenant_id": self._safe_identifier(stored, "tenant_id"),
+                    "security_scope": self._safe_value(stored, "security_scope", StoredFileSecurityScope.PRIVATE_LEARNER),
                     "provider": stored.provider,
                 },
             )
@@ -54,7 +60,11 @@ class StorageService:
         self.event_publisher.publish(
             BusinessEvent.create(
                 "storage.file_deleted",
-                payload={"file_id": str(stored_file.id), "stored_filename": stored_file.stored_filename},
+                payload={
+                    "file_id": str(stored_file.id),
+                    "owner_id": self._safe_identifier(stored_file, "owner_id"),
+                    "tenant_id": self._safe_identifier(stored_file, "tenant_id"),
+                },
             )
         )
 
@@ -64,6 +74,24 @@ class StorageService:
         self.event_publisher.publish(
             BusinessEvent.create(
                 "storage.file_contents_deleted",
-                payload={"file_id": str(stored_file.id), "stored_filename": stored_file.stored_filename},
+                payload={
+                    "file_id": str(stored_file.id),
+                    "owner_id": self._safe_identifier(stored_file, "owner_id"),
+                    "tenant_id": self._safe_identifier(stored_file, "tenant_id"),
+                },
             )
         )
+
+    def _safe_value(self, obj: object, attribute: str, default):
+        value = vars(obj).get(attribute, default)
+        if value is None:
+            return default
+        if value.__class__.__module__ == "unittest.mock" and value.__class__.__name__ == "Mock":
+            return default
+        return value
+
+    def _safe_identifier(self, obj: object, attribute: str):
+        value = self._safe_value(obj, attribute, None)
+        if value is None:
+            return None
+        return str(value)

@@ -59,6 +59,9 @@ def test_storage_service_stores_and_publishes(monkeypatch):
     publisher.publish.assert_called_once()
     published_event = publisher.publish.call_args.args[0]
     assert published_event.event_name == "storage.file_uploaded"
+    assert published_event.payload["security_scope"] == "private_learner"
+    assert "original_filename" not in published_event.payload
+    assert "stored_filename" not in published_event.payload
 
 
 def test_storage_service_delete_publishes(monkeypatch):

@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "apps.notifications.apps.NotificationsConfig",
     "apps.settings.apps.SettingsConfig",
     "apps.audit.apps.AuditConfig",
+    "apps.core.apps.CoreConfig",
     "apps.academic.apps.AcademicConfig",
     "apps.learning.apps.LearningConfig",
     "apps.assessments.apps.AssessmentsConfig",
@@ -47,11 +48,15 @@ INSTALLED_APPS = [
     "apps.learning_identity.apps.LearningIdentityConfig",
     "apps.learning_journeys.apps.LearningJourneysConfig",
     "apps.educational_organization.apps.EducationalOrganizationConfig",
+    "apps.classroom_learning.apps.ClassroomLearningConfig",
+    "apps.ariel.apps.ArielConfig",
+    "apps.study_lab.apps.StudyLabConfig",
 ]
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "config.middleware.RequestCorrelationMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -88,6 +93,8 @@ DATABASES = {
         "PASSWORD": os.getenv("POSTGRES_PASSWORD", "abbot_study_password"),
         "HOST": os.getenv("POSTGRES_HOST", "localhost"),
         "PORT": os.getenv("POSTGRES_PORT", "5432"),
+        "CONN_MAX_AGE": int(os.getenv("POSTGRES_CONN_MAX_AGE", "60")),
+        "CONN_HEALTH_CHECKS": os.getenv("POSTGRES_CONN_HEALTH_CHECKS", "true").lower() == "true",
     }
 }
 
@@ -128,6 +135,20 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "100/hour",
+        "user": "1000/hour",
+        "auth-login": "10/minute",
+        "auth-register": "5/hour",
+        "storage-upload": "60/hour",
+        "reassessment-launch": "20/minute",
+        "assessment-submit": "30/minute",
+    },
 }
 
 SPECTACULAR_SETTINGS = {

@@ -14,6 +14,8 @@ from apps.assessments.domain.models import (
     LearningEvidenceType,
 )
 from apps.assessments.services.evidence_service import EvidenceService
+from apps.assessments.services.evidence_policy_service import ResolveEvaluationEvidencePolicyService
+from apps.assessments.services.evidence_target_service import ResolveEvaluationEvidenceTargetService
 from apps.core.exceptions import LifecycleTransitionError
 from apps.core.events import BusinessEvent, EventPublisher
 
@@ -41,8 +43,16 @@ class EvidenceIntegrationService:
     ) -> None:
         self.event_publisher = event_publisher or EventPublisher()
         self.evidence_service = evidence_service or EvidenceService(event_publisher=self.event_publisher)
+        self.policy_service = ResolveEvaluationEvidencePolicyService()
+        self.target_service = ResolveEvaluationEvidenceTargetService()
 
     def integrate_evaluation(self, evaluation: AssessmentEvaluation) -> LearningEvidence:
+        policy = self.policy_service.resolve(evaluation)
+        if not policy.can_create_evidence:
+            raise LifecycleTransitionError(f"Evaluation is not eligible for evidence creation: {policy.reason_code or 'not_eligible'}.")
+        target = self.target_service.resolve(evaluation)
+        if target is None:
+            raise LifecycleTransitionError("Evaluation is not eligible for evidence creation: missing academic target.")
         source_type = LearningEvidenceSourceType.ASSESSMENT_EVALUATION
         source_id = str(evaluation.id)
         existing = self._existing_evidence(source_type, source_id)
@@ -70,6 +80,12 @@ class EvidenceIntegrationService:
                 "max_score": evaluation.max_score,
                 "is_correct": evaluation.is_correct,
                 "evaluator_type": evaluation.evaluator_type,
+                "evidence_policy_code": policy.policy_code,
+                "evidence_policy_version": policy.policy_version,
+                "evidence_polarity": policy.evidence_polarity,
+                "academic_target_type": target.target_type,
+                "academic_target_id": target.target_id,
+                "academic_target_title": target.target_title,
             },
         )
         self._publish_evaluation_event(evaluation, evidence, created=True)
@@ -111,7 +127,10 @@ class EvidenceIntegrationService:
         integrated_evidence: list[LearningEvidence] = []
         evaluations = AssessmentEvaluation.objects.filter(response__attempt=attempt).order_by("created_at")
         for evaluation in evaluations:
-            integrated_evidence.append(self.integrate_evaluation(evaluation))
+            try:
+                integrated_evidence.append(self.integrate_evaluation(evaluation))
+            except LifecycleTransitionError:
+                logger.info("Skipping ineligible evaluation for evidence integration: evaluation_id=%s", evaluation.id)
 
         result = AssessmentResult.objects.filter(attempt=attempt).first()
         if result:

@@ -54,9 +54,9 @@ class ConversationOrchestratorService:
         session_service: Optional[PedagogicalSessionService] = None,
     ) -> None:
         self.event_publisher = event_publisher or EventPublisher()
-        self.context_assembly_service = context_assembly_service or ContextAssemblyService()
-        self.grounding_service = grounding_service or GroundingService()
-        self.strategy_service = strategy_service or InstructionalStrategyService()
+        self.context_assembly_service = context_assembly_service or ContextAssemblyService(event_publisher=self.event_publisher)
+        self.grounding_service = grounding_service or GroundingService(event_publisher=self.event_publisher)
+        self.strategy_service = strategy_service or InstructionalStrategyService(event_publisher=self.event_publisher)
         self.session_service = session_service or PedagogicalSessionService()
 
     def initialize_conversation(self, session: PedagogicalSession) -> ConversationContext:
